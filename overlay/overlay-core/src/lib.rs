@@ -34,9 +34,30 @@ fn banner_enabled(value: Option<&str>) -> bool {
     }
 }
 
+/// Text shown instead of running upstream's self-updater.
+fn update_message() -> String {
+    format!(
+        "This is a custom build of Grok Build (overlay {OVERLAY_VERSION}), so \
+         `grok update` is disabled.\n\n\
+         Upstream's updater would download the official binary into ~/.grok and \
+         relaunch into it, dropping every customization in this fork.\n\n\
+         To update, sync the fork and rebuild:\n\n  \
+         overlay/scripts/sync-upstream.sh\n  \
+         grk --rebuild\n\n\
+         See AGENTS.md for the full procedure."
+    )
+}
+
+/// Called from the `update` subcommand. Explains how to update a fork build
+/// and exits without touching the installed binaries.
+pub fn block_update() -> ! {
+    eprintln!("{}", update_message());
+    std::process::exit(1);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::banner_enabled;
+    use super::{banner_enabled, update_message};
 
     #[test]
     fn banner_defaults_on() {
@@ -50,5 +71,12 @@ mod tests {
         for v in ["0", "false", "OFF", " no ", ""] {
             assert!(!banner_enabled(Some(v)), "{v} should disable the banner");
         }
+    }
+
+    #[test]
+    fn update_message_points_at_the_fork_workflow() {
+        let msg = update_message();
+        assert!(msg.contains("sync-upstream.sh"));
+        assert!(msg.contains("grk --rebuild"));
     }
 }

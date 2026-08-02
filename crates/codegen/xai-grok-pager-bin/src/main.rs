@@ -2068,6 +2068,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 stable,
                 enterprise,
             } => {
+                overlay_core::block_update();
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
                 let channel_switch = get_channel_switch(alpha, stable, enterprise);
