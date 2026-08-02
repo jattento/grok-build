@@ -162,10 +162,20 @@ panes, start helper agents in sibling panes, read output, and wait on state.
 Do not write local rules or wrapper scripts for that; the skill is the source
 of truth and it activates only when the user mentions Herdr.
 
-Herdr's own `agent start --kind grok` launches the canonical `grok` from
-`PATH`, which is the official binary rather than this build. Putting a `grok`
-shim in `~/bin` would redirect it to the fork, at the cost of shadowing the
-official binary system-wide.
+Herdr's own `agent start --kind grok` launches whatever `grok` resolves to on
+`PATH`, so `~/bin/grok` is a symlink to `overlay/scripts/grk` and the official
+binary that the installer put in `~/.local/bin` was deleted. `~/bin` comes
+first on `PATH`, so every `grok` on this machine — ours, Herdr's, any script's
+— is this fork. Recreate the symlink after cloning:
+
+```sh
+ln -sfn "$PWD/overlay/scripts/grk" ~/bin/grok
+```
+
+On a tree with no `target/release` build yet, the first `grk` compiles, which
+takes far longer than the 30-second startup timeout of `agent start`. Build
+once by hand there; after that `grk` never builds on its own, so agent panes
+start immediately.
 
 Use `herdr agent explain <pane>` when a pane shows the wrong state; it prints
 the manifest, the rule that matched, and the evidence.
