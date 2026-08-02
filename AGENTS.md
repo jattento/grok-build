@@ -159,8 +159,9 @@ of upstream touchpoints:
 
 A mirrored pane is a display surface, not the subagent itself: subagents run
 in-process inside the parent, so the pane carries their identity and state
-rather than their live output. Panes stay open after `done` so the run remains
-visible; close them with `ctrl+b x`.
+rather than their live output. It closes itself when the subagent ends, since
+the parent's transcript already holds the result and a finished pane is only
+clutter. Set `GROK_HERDR_KEEP_SUBAGENT_PANES=1` to keep them instead.
 
 Driving Herdr from inside a session is Herdr's own job, not ours: it ships an
 official agent skill, installed with

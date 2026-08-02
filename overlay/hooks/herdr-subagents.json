@@ -18,7 +18,7 @@
           {
             "type": "command",
             "timeout": 20,
-            "command": "[ -n \"$HERDR_PANE_ID\" ] || exit 0; ev=$(cat); id=$(printf %s \"$ev\" | jq -r .subagentId); case \"$id\" in \"\"|null) exit 0;; esac; type=$(printf %s \"$ev\" | jq -r .subagentType); reg=\"$HOME/.grok/herdr-subagents\"; [ -f \"$reg/$id\" ] || exit 0; pane=$(cat \"$reg/$id\"); herdr pane report-agent \"$pane\" --source custom:grok-subagent --agent \"$type\" --state idle >/dev/null 2>&1; rm -f \"$reg/$id\"; exit 0"
+            "command": "[ -n \"$HERDR_PANE_ID\" ] || exit 0; ev=$(cat); id=$(printf %s \"$ev\" | jq -r .subagentId); case \"$id\" in \"\"|null) exit 0;; esac; type=$(printf %s \"$ev\" | jq -r .subagentType); reg=\"$HOME/.grok/herdr-subagents\"; [ -f \"$reg/$id\" ] || exit 0; pane=$(cat \"$reg/$id\"); herdr pane report-agent \"$pane\" --source custom:grok-subagent --agent \"$type\" --state idle >/dev/null 2>&1; case \"${GROK_HERDR_KEEP_SUBAGENT_PANES:-}\" in \"\"|0|false|off|no) herdr pane close \"$pane\" >/dev/null 2>&1;; esac; rm -f \"$reg/$id\" \"$reg/$id.txt\"; exit 0"
           }
         ]
       }
