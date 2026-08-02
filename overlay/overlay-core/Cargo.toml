@@ -1,0 +1,10 @@
+[package]
+name = "overlay-core"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+publish = false
+
+# Keep this package dependency-free. It is linked into the grok binary and the
+# whole point of the overlay is that an upstream sync can never break it.
+[dependencies]
