@@ -534,8 +534,13 @@ impl ToolCallFunction {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Usage {
+    // overlay: OpenAI-compatible gateways (CLIProxyAPI) emit partial `usage`
+    // objects on interim stream chunks; missing counters must not abort the stream.
+    #[serde(default)]
     pub prompt_tokens: u32,
+    #[serde(default)]
     pub completion_tokens: u32,
+    #[serde(default)]
     pub total_tokens: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
@@ -571,12 +576,17 @@ pub struct CompletionTokensDetails {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatCompletionChunk {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub object: String,
+    #[serde(default)]
     pub created: u64,
+    #[serde(default)]
     pub model: String,
+    #[serde(default)]
     pub choices: Vec<ChatChunkChoice>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
     #[serde(
         default,
@@ -608,13 +618,13 @@ pub struct ToolCallDelta {
     #[serde(default)]
     pub index: u32,
     /// Only present in the first chunk for this tool call.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Only present in the first chunk (usually "function").
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     /// The function name and/or argument fragment.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub function: Option<ToolCallFunctionDelta>,
 }
 
@@ -633,10 +643,11 @@ pub struct ToolCallFunctionDelta {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ChatChunkDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(default)]
     pub reasoning_content: Option<String>,
     /// Tool call deltas. Handles `null` in JSON as empty vec.
     #[serde(
@@ -645,7 +656,7 @@ pub struct ChatChunkDelta {
         deserialize_with = "deserialize_null_default"
     )]
     pub tool_calls: Vec<ToolCallDelta>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 }
 
