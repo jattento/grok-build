@@ -148,14 +148,32 @@ of upstream touchpoints:
   reported as `unknown`; launched through the symlink it is a first-class
   `grok` agent, with no environment hints involved. `HERDR_AGENT=grok` stays
   exported only as a fallback for when the symlink cannot be created.
-- `overlay/scripts/grk-herd` opens a new pane running this build, waits for
-  Herdr to detect it, names it, and optionally sends it a prompt. Herdr's own
-  `agent start --kind grok` cannot be used: it launches the canonical `grok` on
-  `PATH`, which is the official binary, not ours.
+- `overlay/hooks/herdr-subagents.json`, symlinked into `~/.grok/hooks/`, mirrors
+  every native subagent into its own pane. Grok's `SubagentStart` hook splits
+  the current pane, reports the subagent to Herdr with
+  `herdr pane report-agent --source custom:grok-subagent`, and prints the
+  subagent type and task into it; `SubagentStop` reports `idle`, which Herdr
+  rolls up as `done`. Only Herdr's own CLI and `jq` are involved, so there is
+  no custom program in the path, and the hook is inert outside Herdr because
+  `HERDR_PANE_ID` is only set inside a pane.
 
-`~/.grok/rules/herdr.md` teaches Grok itself to delegate through `grk-herd`
-when `HERDR_PANE_ID` is set. It lives outside the repo because it applies to
-every project, not just this one.
+A mirrored pane is a display surface, not the subagent itself: subagents run
+in-process inside the parent, so the pane carries their identity and state
+rather than their live output. Panes stay open after `done` so the run remains
+visible; close them with `ctrl+b x`.
+
+Driving Herdr from inside a session is Herdr's own job, not ours: it ships an
+official agent skill, installed with
+`npx skills add herdrdev/herdr --skill herdr -g`. It lands in
+`~/.agents/skills/herdr`, which Grok scans, and it teaches the agent to split
+panes, start helper agents in sibling panes, read output, and wait on state.
+Do not write local rules or wrapper scripts for that; the skill is the source
+of truth and it activates only when the user mentions Herdr.
+
+Herdr's own `agent start --kind grok` launches the canonical `grok` from
+`PATH`, which is the official binary rather than this build. Putting a `grok`
+shim in `~/bin` would redirect it to the fork, at the cost of shadowing the
+official binary system-wide.
 
 Use `herdr agent explain <pane>` when a pane shows the wrong state; it prints
 the manifest, the rule that matched, and the evidence.
