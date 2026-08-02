@@ -101,6 +101,21 @@ Run it before finishing any task that touched xAI's tree, and after every sync.
 
 ## Building and verifying
 
+Day to day, run the fork through `grk` (a symlink in `~/bin` to
+`overlay/scripts/grk`). It runs the last release build from any directory,
+and `grk --rebuild` recompiles first:
+
+```sh
+grk                        # run the local build in the current directory
+grk --rebuild "fix this"   # rebuild, then run
+```
+
+`grk` never rebuilds on its own. Upstream's `build.rs` points
+`rerun-if-changed` at a path that does not exist inside the crate, so cargo
+re-runs the build script and relinks on every invocation — about 17s even with
+no changes. Instead, `grk` prints a one-line warning when the binary is older
+than anything in `overlay/` or `crates/`.
+
 A full workspace build is slow (~100 packages). Target packages explicitly:
 
 ```sh
