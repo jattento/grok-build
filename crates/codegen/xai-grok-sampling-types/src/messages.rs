@@ -130,7 +130,9 @@ pub enum ContentBlock {
         cache_control: Option<CacheControl>,
     },
     Thinking {
+        #[serde(default)]
         thinking: String,
+        #[serde(default)]
         signature: String,
     },
     /// Encrypted reasoning the model chose to redact. Carries only an opaque
