@@ -22,6 +22,14 @@ pub fn install() {
     }
 }
 
+/// Marker appended to the version badge on the welcome screen, so the running
+/// build is identifiable from inside the TUI. The startup banner goes to
+/// stderr and is wiped when the alternate screen takes over, which makes it
+/// useless once the UI is up.
+pub fn hero_suffix() -> String {
+    format!("  · overlay {OVERLAY_VERSION}")
+}
+
 /// Banner is on by default; only the usual falsy spellings turn it off, which
 /// matches how upstream reads its own on/off env vars.
 fn banner_enabled(value: Option<&str>) -> bool {

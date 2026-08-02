@@ -10,6 +10,8 @@ authors = ["xAI"]
 dunce = { workspace = true }
 xai-tty-utils = { workspace = true }
 xai-grok-version = { workspace = true }
+# Fork-local customizations. See AGENTS.md / overlay/TOUCHPOINTS.md.
+overlay-core = { path = "../../../overlay/overlay-core" }
 
 # Shared prompt-queue wire types
 xai-prompt-queue = { workspace = true }
