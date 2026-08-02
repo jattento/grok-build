@@ -495,6 +495,10 @@ pub(super) fn render_version_badge(
         }
     }
 
+    spans.push(Span::styled(
+        overlay_core::hero_suffix(),
+        Style::default().fg(theme.gray),
+    ));
     let version_line = Line::from(spans).alignment(align);
     Paragraph::new(version_line).render(version_area, buf);
 }

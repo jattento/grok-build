@@ -55,6 +55,25 @@ Template for new entries:
 - Retire when: never. This is the intended single entry point; new behaviour
   goes inside `overlay_core::install()`, not into new call sites here.
 
+### `crates/codegen/xai-grok-pager/Cargo.toml`
+
+- What: adds the `overlay-core` path dependency.
+- Why here: the dependency must be declared by the package that links it, and
+  the welcome view lives in this package.
+- Retire when: the welcome-screen marker below is dropped.
+
+### `crates/codegen/xai-grok-pager/src/views/welcome/mod.rs`
+
+- What: one `spans.push(overlay_core::hero_suffix())` in the version badge,
+  placed after the `VersionBadgeMode` match so it covers every layout.
+- Why here: the startup banner goes to stderr and is erased the moment the
+  alternate screen takes over, so it is invisible in the TUI. The version badge
+  is the only element rendered in all welcome layouts.
+- Why after the match and not inside an arm: the badge has several modes and
+  the terminal width decides which one runs; a per-arm edit would show the
+  marker only at some widths and would mean several touchpoints instead of one.
+- Retire when: we no longer want the running build identified on screen.
+
 ### `Cargo.lock`
 
 - What: the lockfile entry for `overlay-core` (and anything it ever depends on).
