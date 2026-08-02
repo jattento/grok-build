@@ -21,6 +21,9 @@ xai-grok-pager = { path = "../xai-grok-pager" }
 # Optional scrollback-native render mode, wired in via the fn-pointer seam.
 xai-grok-pager-minimal = { path = "../xai-grok-pager-minimal" }
 
+# Fork-local customizations. See AGENTS.md / overlay/TOUCHPOINTS.md.
+overlay-core = { path = "../../../overlay/overlay-core" }
+
 # Agent runtime + leader/stdio/headless entry points.
 xai-grok-shell = { workspace = true }
 xai-grok-update = { path = "../xai-grok-update" }

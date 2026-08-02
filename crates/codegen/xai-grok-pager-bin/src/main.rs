@@ -1831,6 +1831,7 @@ fn main() {
         return;
     }
     xai_grok_pager_minimal::install();
+    overlay_core::install();
     #[cfg(all(feature = "jemalloc", unix))]
     xai_grok_pager::memory_release::install_release_hook(purge_jemalloc_retained_pages);
     #[cfg(all(feature = "jemalloc", unix))]
