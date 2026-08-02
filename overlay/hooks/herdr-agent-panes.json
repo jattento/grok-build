@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "spawn_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "p=$(cat); if [ -z \"${HERDR_PANE_ID:-}\" ] || ! command -v herdr >/dev/null 2>&1; then echo '{\"decision\":\"allow\"}'; exit 0; fi; d=$(printf '%s' \"$p\" | jq -r '.toolInput.description // \"the delegated task\"'); c=$(printf '%s' \"$p\" | jq -r '.cwd // \".\"'); jq -n --arg d \"$d\" --arg c \"$c\" '{decision:\"deny\",reason:(\"In-process subagents are disabled under Herdr: they run inside this process with no terminal of their own, so a pane has nothing to display. Start a real agent instead, a full Grok TUI in its own pane, with the same task you were about to delegate (\" + $d + \"). Run this as ONE shell command, replacing NAME and TASK:\\n\\npane=$(herdr pane split --current --direction right --cwd \\\"\" + $c + \"\\\" --no-focus | jq -r .result.pane.pane_id)\\nsid=$(uuidgen)\\nfor i in $(seq 1 30); do herdr agent start NAME --kind grok --pane $pane -- --session-id $sid \\\"TASK\\\" && break; sleep 1; done\\nherdr agent wait NAME --until working --timeout 30000 >/dev/null 2>&1\\nherdr agent wait NAME --until idle --until blocked --timeout 900000 | jq -r .result.agent.agent_status\\nherdr agent read NAME --source recent-unwrapped --lines 200\\n\\nThe details matter, all three were verified: pass TASK as the agent argument after --, never through agent prompt, because a freshly started TUI queues prompts while it shows Starting session; keep the retry loop, because the new pane needs a few seconds to reach its shell prompt; keep --cwd absolute, because a relative one resolves to / and the agent stops on a trust dialog. TASK must be self-contained: the new agent inherits none of this conversation.\\n\\nThe pane stays open and you own its lifetime. The agent is a full session with memory, so follow up with: herdr agent prompt NAME MORE-TEXT --wait --timeout 900000, then read again. Close it with: herdr pane close $pane && grok sessions delete $sid, as soon as you are done with that agent; the delete is what keeps these throwaway agents out of the session history, and account for every pane you opened before you end your turn. A blocked agent is waiting for input: leave its pane open and tell the user its name and pane id. NAME matches [a-z][a-z0-9_-]{0,31} and must be unique among live agents. Split --direction down instead when the current pane is narrow. Do not create workspaces, tabs, or worktrees, and keep focus in this pane.\")}'"
+          }
+        ]
+      }
+    ]
+  }
+}
