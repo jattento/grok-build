@@ -1,0 +1,27 @@
+{
+  "_comment": "Surfaces Grok's native subagents as Herdr panes. Only Herdr's own CLI and jq are used; there is no custom program in the path. Inert outside Herdr, because HERDR_PANE_ID is only set inside a pane.",
+  "hooks": {
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 20,
+            "command": "[ -n \"$HERDR_PANE_ID\" ] || exit 0; ev=$(cat); id=$(printf %s \"$ev\" | jq -r .subagentId); case \"$id\" in \"\"|null) exit 0;; esac; type=$(printf %s \"$ev\" | jq -r .subagentType); reg=\"$HOME/.grok/herdr-subagents\"; mkdir -p \"$reg\"; printf %s \"$ev\" | jq -r '\"\\(.subagentType)\\n\\n\\(.description // \"\")\"' > \"$reg/$id.txt\"; pane=$(herdr pane split \"$HERDR_PANE_ID\" --direction down --no-focus | jq -r .result.pane.pane_id) || exit 0; case \"$pane\" in \"\"|null) exit 0;; esac; printf %s \"$pane\" > \"$reg/$id\"; herdr pane report-agent \"$pane\" --source custom:grok-subagent --agent \"$type\" --state working >/dev/null 2>&1; herdr pane run \"$pane\" cat \"$reg/$id.txt\" >/dev/null 2>&1; exit 0"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 20,
+            "command": "[ -n \"$HERDR_PANE_ID\" ] || exit 0; ev=$(cat); id=$(printf %s \"$ev\" | jq -r .subagentId); case \"$id\" in \"\"|null) exit 0;; esac; type=$(printf %s \"$ev\" | jq -r .subagentType); reg=\"$HOME/.grok/herdr-subagents\"; [ -f \"$reg/$id\" ] || exit 0; pane=$(cat \"$reg/$id\"); herdr pane report-agent \"$pane\" --source custom:grok-subagent --agent \"$type\" --state idle >/dev/null 2>&1; rm -f \"$reg/$id\"; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
