@@ -82,3 +82,23 @@ Template for new entries:
 - Retire when: never. On conflict, take upstream's file wholesale and re-run
   `cargo check -p xai-grok-pager-bin` to re-add our entries. Keeping
   `overlay-*` packages dependency-free keeps this diff to a few lines.
+
+### `crates/codegen/xai-grok-sampling-types/src/types.rs`
+
+- What: `#[serde(default)]` on the streaming chat-completions types that the
+  wire may legitimately omit: `ChatCompletionChunk::{id, object, created,
+  model, choices, usage}`, `Usage::{prompt_tokens, completion_tokens,
+  total_tokens}`, `ToolCallDelta::{id, kind, function}`, and
+  `ChatChunkDelta::{role, content, reasoning_content, tool_call_id}`. No field
+  was removed, retyped, or reordered.
+- Why here: these structs are deserialized straight from the SSE stream by
+  `xai-grok-sampler`, and a single chunk missing any of these fields kills the
+  whole turn with `serialization error: missing field ...`. Against the local
+  CLIProxyAPI gateway (the `cliproxy` models in `~/.grok/config.toml`) this made
+  most non-xAI routes unusable: Gemini sends interim `usage` objects without
+  `total_tokens`, OpenCode sends tool-call argument deltas without `id`/`type`
+  and a trailing `{"choices":[],"cost":"0"}` chunk with no envelope fields.
+  `ToolCallDelta`'s own doc comment already promises every field but `index` is
+  optional, so this is upstream intent that serde was not told about. Serde
+  attributes have no config, hook, or overlay seam.
+- Retire when: upstream makes the stream types tolerant of partial chunks.
