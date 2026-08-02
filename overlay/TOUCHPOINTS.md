@@ -36,14 +36,22 @@ Template for new entries:
 
 ### `crates/codegen/xai-grok-pager-bin/src/main.rs`
 
-- What: one line, `overlay_core::install();`, right after
-  `xai_grok_pager_minimal::install();` in `fn main()`.
-- Why here: it is the composition root — the only place that runs once, before
-  any mode (TUI, headless, ACP, leader) is selected. Upstream already installs
-  its own hooks in the same spot, so our line sits among similar neighbours and
-  rarely lands in a conflicting hunk.
-- Caveat: `--version` and `doctor` return before this point, so the overlay is
-  not installed for those two fast paths.
+- What: two single lines. `overlay_core::install();` right after
+  `xai_grok_pager_minimal::install();` in `fn main()`, and
+  `overlay_core::block_update();` as the first statement of the
+  `Command::Update` arm.
+- Why here: `fn main()` is the composition root — the only place that runs
+  once, before any mode (TUI, headless, ACP, leader) is selected. Upstream
+  already installs its own hooks in the same spot, so our line sits among
+  similar neighbours and rarely lands in a conflicting hunk.
+- Why a second call site: upstream's updater downloads the official binary into
+  `~/.grok` and `restart_grok()` then prefers `~/.grok/bin/grok` over the
+  running executable, so an update silently replaces this fork mid-session.
+  That has to be intercepted at the `update` subcommand itself; it cannot be
+  expressed from inside `install()`. It also covers the auto-update path, which
+  works by spawning `<self> update`.
+- Caveat: `--version` and `doctor` return before `install()`, so the overlay is
+  not active for those two fast paths.
 - Retire when: never. This is the intended single entry point; new behaviour
   goes inside `overlay_core::install()`, not into new call sites here.
 
