@@ -147,12 +147,40 @@ is reported as `unknown`; launched through the symlink it is a first-class
 `grok` agent, with no environment hints involved. `HERDR_AGENT=grok` stays
 exported only as a fallback for when the symlink cannot be created.
 
-Nothing else is ours. In particular, do not mirror Grok's native in-process
-subagents into panes with hooks: a native subagent has no terminal UI, so a
-pane fed from `SubagentStart`/`PreToolUse` can only show a flat log of tool
-calls, not a Grok window. The pattern Herdr is built for is the opposite one —
-the agent in the current pane starts *real* agents, full processes with their
-own Grok UI, in sibling panes, and waits on their state.
+Do not try to mirror Grok's native in-process subagents into panes: a native
+subagent has no terminal of its own, so a pane fed from `SubagentStart` or
+`PreToolUse` can only ever show a flat log of tool calls, never a Grok window.
+Grok already renders that child transcript itself, in a framed fullscreen view
+reachable with Enter on the scrollback block or Ctrl+G. The pattern Herdr is
+built for is the opposite one: the agent in the current pane starts *real*
+agents — separate processes, each with its own Grok UI — in sibling panes.
+
+`overlay/hooks/herdr-agent-panes.json`, symlinked into `~/.grok/hooks/`, makes
+that the only option here. It is a `PreToolUse` hook on `spawn_subagent` that
+denies the call and returns the pane recipe as the deny reason, so the model
+gets the redirect exactly when it needs it instead of relying on a rule it
+might not recall. It allows the call when `HERDR_PANE_ID` is unset or `herdr`
+is missing, which keeps native subagents working outside Herdr, and it uses
+only `jq` and Herdr's own CLI. Hooks load at session start, so a fresh session
+is needed after editing it.
+
+The deny reason is the single source of truth for how to drive a pane agent —
+do not restate the commands here, or the two copies will drift apart. Every
+step in it was a failure first, so change it only against a live Herdr.
+
+What the recipe is worth knowing about: a pane agent is an ordinary Grok
+session, so it keeps its memory across turns and can be asked follow-ups. The
+parent owns its lifetime and closes the pane when it is done with the agent;
+nothing closes it automatically, because a one-shot pane throws away a session
+that can still answer. Closing also deletes the agent's session: a pane agent
+is a top-level session and would otherwise show up in `grok sessions list` and
+the `/resume` picker forever, which native subagents never do — their sessions
+exist on disk but are kept out of that list. Delegating this way is not free
+either: each agent is a
+separate process with its own context and token spend, it has to be prompted
+and awaited over the CLI, and its result comes back as scraped screen text
+rather than a value. There is also no depth limit, unlike native subagents: an
+agent in a pane can open panes of its own.
 
 Driving Herdr from inside a session is Herdr's own job, not ours: it ships an
 official agent skill, installed with
