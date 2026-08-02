@@ -157,11 +157,17 @@ of upstream touchpoints:
   no custom program in the path, and the hook is inert outside Herdr because
   `HERDR_PANE_ID` is only set inside a pane.
 
-A mirrored pane is a display surface, not the subagent itself: subagents run
-in-process inside the parent, so the pane carries their identity and state
-rather than their live output. It closes itself when the subagent ends, since
-the parent's transcript already holds the result and a finished pane is only
-clutter. Set `GROK_HERDR_KEEP_SUBAGENT_PANES=1` to keep them instead.
+The pane streams what the subagent is doing. `PreToolUse` carries `subagentType`
+when a tool runs inside a subagent, and the envelope's `sessionId` is that
+subagent's id, so each tool call is appended to a per-subagent log that the
+pane tails; `SubagentStop` appends the subagent's `lastAssistantMessage`. The
+log opens with an ANSI clear so the pane shows only the feed rather than the
+shell banner. Tool arguments are dumped generically from `toolInput` because
+field names differ per tool.
+
+The pane closes itself when the subagent ends, since the parent's transcript
+already holds the result and a finished pane only competes for space with the
+agents still working. Set `GROK_HERDR_KEEP_SUBAGENT_PANES=1` to keep them.
 
 Driving Herdr from inside a session is Herdr's own job, not ours: it ships an
 official agent skill, installed with
