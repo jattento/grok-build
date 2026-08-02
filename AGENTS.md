@@ -141,10 +141,13 @@ blocked. The server runs as a Homebrew service, so it survives logout.
 Two pieces make the fork work there, both inside `overlay/` and therefore free
 of upstream touchpoints:
 
-- `grk` exports `HERDR_AGENT=grok`. Herdr identifies agents by the foreground
-  process, which here is `xai-grok-pager` rather than the `grok` its manifest
-  expects. In practice detection also succeeds through the OSC terminal title,
-  but the hint keeps it working if that ever changes.
+- `grk` execs through a symlink named `grok` that it keeps next to the binary.
+  Herdr identifies an agent from the basename of the path the process was
+  exec'd from, and upstream builds the artifact as `xai-grok-pager` while every
+  Herdr manifest expects `grok`. Launched under its own name the pane is
+  reported as `unknown`; launched through the symlink it is a first-class
+  `grok` agent, with no environment hints involved. `HERDR_AGENT=grok` stays
+  exported only as a fallback for when the symlink cannot be created.
 - `overlay/scripts/grk-herd` opens a new pane running this build, waits for
   Herdr to detect it, names it, and optionally sends it a prompt. Herdr's own
   `agent start --kind grok` cannot be used: it launches the canonical `grok` on
