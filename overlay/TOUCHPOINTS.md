@@ -102,3 +102,15 @@ Template for new entries:
   optional, so this is upstream intent that serde was not told about. Serde
   attributes have no config, hook, or overlay seam.
 - Retire when: upstream makes the stream types tolerant of partial chunks.
+
+### `crates/codegen/xai-grok-sampling-types/src/messages.rs`
+
+- What: `#[serde(default)]` on `ContentBlock::Thinking::{thinking, signature}`.
+- Why here: Anthropic opens a thinking block with
+  `{"type":"thinking","thinking":""}` and fills it through deltas, and some
+  routes never send plaintext at all — the thought comes back as a signed blob
+  with no `thinking` field. Either shape aborted the stream before this. The
+  `messages` backend is what gives Claude, GPT and Gemini a visible chain of
+  thought through the local gateway, so the fork is unusable with reasoning
+  models without it. Serde attributes have no config or overlay seam.
+- Retire when: upstream tolerates thinking blocks that carry only a signature.
