@@ -138,36 +138,21 @@ Building from source needs `dotslash` on `PATH` (see `README.md`).
 keeps each agent in its own pane and tracks whether it is idle, working, or
 blocked. The server runs as a Homebrew service, so it survives logout.
 
-Two pieces make the fork work there, both inside `overlay/` and therefore free
-of upstream touchpoints:
+One piece makes the fork work there, inside `overlay/` and therefore free of
+upstream touchpoints: `grk` execs through a symlink named `grok` that it keeps
+next to the binary. Herdr identifies an agent from the basename of the path the
+process was exec'd from, and upstream builds the artifact as `xai-grok-pager`
+while every Herdr manifest expects `grok`. Launched under its own name the pane
+is reported as `unknown`; launched through the symlink it is a first-class
+`grok` agent, with no environment hints involved. `HERDR_AGENT=grok` stays
+exported only as a fallback for when the symlink cannot be created.
 
-- `grk` execs through a symlink named `grok` that it keeps next to the binary.
-  Herdr identifies an agent from the basename of the path the process was
-  exec'd from, and upstream builds the artifact as `xai-grok-pager` while every
-  Herdr manifest expects `grok`. Launched under its own name the pane is
-  reported as `unknown`; launched through the symlink it is a first-class
-  `grok` agent, with no environment hints involved. `HERDR_AGENT=grok` stays
-  exported only as a fallback for when the symlink cannot be created.
-- `overlay/hooks/herdr-subagents.json`, symlinked into `~/.grok/hooks/`, mirrors
-  every native subagent into its own pane. Grok's `SubagentStart` hook splits
-  the current pane, reports the subagent to Herdr with
-  `herdr pane report-agent --source custom:grok-subagent`, and prints the
-  subagent type and task into it; `SubagentStop` reports `idle`, which Herdr
-  rolls up as `done`. Only Herdr's own CLI and `jq` are involved, so there is
-  no custom program in the path, and the hook is inert outside Herdr because
-  `HERDR_PANE_ID` is only set inside a pane.
-
-The pane streams what the subagent is doing. `PreToolUse` carries `subagentType`
-when a tool runs inside a subagent, and the envelope's `sessionId` is that
-subagent's id, so each tool call is appended to a per-subagent log that the
-pane tails; `SubagentStop` appends the subagent's `lastAssistantMessage`. The
-log opens with an ANSI clear so the pane shows only the feed rather than the
-shell banner. Tool arguments are dumped generically from `toolInput` because
-field names differ per tool.
-
-The pane closes itself when the subagent ends, since the parent's transcript
-already holds the result and a finished pane only competes for space with the
-agents still working. Set `GROK_HERDR_KEEP_SUBAGENT_PANES=1` to keep them.
+Nothing else is ours. In particular, do not mirror Grok's native in-process
+subagents into panes with hooks: a native subagent has no terminal UI, so a
+pane fed from `SubagentStart`/`PreToolUse` can only show a flat log of tool
+calls, not a Grok window. The pattern Herdr is built for is the opposite one —
+the agent in the current pane starts *real* agents, full processes with their
+own Grok UI, in sibling panes, and waits on their state.
 
 Driving Herdr from inside a session is Herdr's own job, not ours: it ships an
 official agent skill, installed with
