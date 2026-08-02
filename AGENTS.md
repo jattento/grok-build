@@ -132,6 +132,31 @@ upstream API that changed under us.
 
 Building from source needs `dotslash` on `PATH` (see `README.md`).
 
+## Herdr
+
+[Herdr](https://herdr.dev) is the terminal multiplexer we run this build in. It
+keeps each agent in its own pane and tracks whether it is idle, working, or
+blocked. The server runs as a Homebrew service, so it survives logout.
+
+Two pieces make the fork work there, both inside `overlay/` and therefore free
+of upstream touchpoints:
+
+- `grk` exports `HERDR_AGENT=grok`. Herdr identifies agents by the foreground
+  process, which here is `xai-grok-pager` rather than the `grok` its manifest
+  expects. In practice detection also succeeds through the OSC terminal title,
+  but the hint keeps it working if that ever changes.
+- `overlay/scripts/grk-herd` opens a new pane running this build, waits for
+  Herdr to detect it, names it, and optionally sends it a prompt. Herdr's own
+  `agent start --kind grok` cannot be used: it launches the canonical `grok` on
+  `PATH`, which is the official binary, not ours.
+
+`~/.grok/rules/herdr.md` teaches Grok itself to delegate through `grk-herd`
+when `HERDR_PANE_ID` is set. It lives outside the repo because it applies to
+every project, not just this one.
+
+Use `herdr agent explain <pane>` when a pane shows the wrong state; it prints
+the manifest, the rule that matched, and the evidence.
+
 ## Definition of done
 
 A change is finished when all of these hold:

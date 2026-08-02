@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Open a new Herdr pane running this fork's grok build, optionally with a prompt.
+#
+#   grk-herd                          split right, start an agent, leave it idle
+#   grk-herd --name reviewer "..."    name it and send it a prompt
+#   grk-herd --direction down "..."   split downwards instead
+#
+# Herdr's own `agent start --kind grok` launches the canonical `grok` on PATH,
+# which is the official binary, so this starts the agent with `grk` instead.
+set -euo pipefail
+
+direction=right
+name=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --direction) direction=$2; shift 2 ;;
+    --name) name=$2; shift 2 ;;
+    --) shift; break ;;
+    -*) echo "grk-herd: unknown option $1" >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+prompt=${*:-}
+
+command -v herdr >/dev/null || { echo "grk-herd: herdr is not installed" >&2; exit 1; }
+if [ -z "${HERDR_PANE_ID:-}" ]; then
+  echo "grk-herd: not inside a Herdr pane (HERDR_PANE_ID is unset)" >&2
+  exit 1
+fi
+
+pane=$(herdr pane split --current --direction "$direction" --no-focus |
+  jq -r '.result.pane.pane_id')
+herdr pane run "$pane" grk >/dev/null
+
+# Detection is screen-based: the agent does not exist for Herdr until its UI has
+# drawn, and `agent wait` errors on a target it cannot resolve yet, so poll for
+# the agent to appear before waiting on its state.
+deadline=$((SECONDS + 60))
+until herdr agent get "$pane" >/dev/null 2>&1; do
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    echo "grk-herd: agent never appeared in $pane" >&2
+    exit 1
+  fi
+  sleep 1
+done
+herdr agent wait "$pane" --until idle --timeout 60000 >/dev/null
+
+target=$pane
+if [ -n "$name" ]; then
+  herdr agent rename "$pane" "$name" >/dev/null
+  target=$name
+fi
+
+[ -n "$prompt" ] && herdr agent prompt "$target" "$prompt" >/dev/null
+
+echo "$target"
