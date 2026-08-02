@@ -48,4 +48,10 @@ elif stale=$(cd "$repo_root" && find overlay crates -type f \
 fi
 
 # No cd: grok must see the caller's working directory.
+# Herdr identifies agents by the foreground process, which here is
+# `xai-grok-pager` rather than the `grok` its manifest expects. This hint is the
+# documented way to point a wrapped process at an existing agent manifest, and
+# it is scoped to this process instead of the whole shell.
+export HERDR_AGENT="${HERDR_AGENT:-grok}"
+
 exec "$bin" "$@"
