@@ -147,40 +147,71 @@ is reported as `unknown`; launched through the symlink it is a first-class
 `grok` agent, with no environment hints involved. `HERDR_AGENT=grok` stays
 exported only as a fallback for when the symlink cannot be created.
 
-Do not try to mirror Grok's native in-process subagents into panes: a native
-subagent has no terminal of its own, so a pane fed from `SubagentStart` or
-`PreToolUse` can only ever show a flat log of tool calls, never a Grok window.
-Grok already renders that child transcript itself, in a framed fullscreen view
-reachable with Enter on the scrollback block or Ctrl+G. The pattern Herdr is
-built for is the opposite one: the agent in the current pane starts *real*
-agents — separate processes, each with its own Grok UI — in sibling panes.
+Delegation stays native, and every native subagent gets its own pane showing
+its session live. `overlay/hooks/herdr-subagent-panes.json`, symlinked into
+`~/.grok/hooks/`, splits a sibling pane on `SubagentStart` and starts
+`grok --resume <subagentId>` in it, then closes that pane on `SubagentStop`.
+The hook is inert when `HERDR_PANE_ID` is unset or `herdr` is missing, so
+delegation outside Herdr behaves exactly as upstream ships it, and it uses only
+`jq` and Herdr's own CLI.
 
-`overlay/hooks/herdr-agent-panes.json`, symlinked into `~/.grok/hooks/`, makes
-that the only option here. It is a `PreToolUse` hook on `spawn_subagent` that
-denies the call and returns the pane recipe as the deny reason, so the model
-gets the redirect exactly when it needs it instead of relying on a rule it
-might not recall. It allows the call when `HERDR_PANE_ID` is unset or `herdr`
-is missing, which keeps native subagents working outside Herdr, and it uses
-only `jq` and Herdr's own CLI. Hooks load at session start, so a fresh session
-is needed after editing it.
+This works because of four properties of upstream, none of which we added:
 
-The deny reason is the single source of truth for how to drive a pane agent —
-do not restate the commands here, or the two copies will drift apart. Every
-step in it was a failure first, so change it only against a live Herdr.
+- The leader multiplexes one session to many clients and fans notifications out
+  to every subscriber (`xai-grok-shell/src/leader/server.rs:2255`). Subscribing
+  is implicit in `session/load`.
+- The first client to load a session keeps the driver role
+  (`leader/server.rs:1854`), and a child session inherits its parent's driver
+  (`:654`, `:2275`), so the watcher is a passive observer and cannot steal the
+  subagent from its parent.
+- A subagent's session is `hidden` (`session/persistence.rs:1014`), which only
+  hides it from the *search* paths — listing and title lookup. Loading it by
+  explicit UUID works, which is why `--resume <subagentId>` opens it.
+- `SubagentStart` already carries the child's session id as `subagentId`
+  (`xai-grok-hooks/src/event.rs:469`).
 
-What the recipe is worth knowing about: a pane agent is an ordinary Grok
-session, so it keeps its memory across turns and can be asked follow-ups. The
-parent owns its lifetime and closes the pane when it is done with the agent;
-nothing closes it automatically, because a one-shot pane throws away a session
-that can still answer. Closing also deletes the agent's session: a pane agent
-is a top-level session and would otherwise show up in `grok sessions list` and
-the `/resume` picker forever, which native subagents never do — their sessions
-exist on disk but are kept out of that list. Delegating this way is not free
-either: each agent is a
-separate process with its own context and token spend, it has to be prompted
-and awaited over the CLI, and its result comes back as scraped screen text
-rather than a value. There is also no depth limit, unlike native subagents: an
-agent in a pane can open panes of its own.
+That first property needs `[cli] use_leader = true` in `~/.grok/config.toml`.
+Without a leader the two processes only share a disk and the pane shows a
+frozen snapshot. This is a machine-wide change, not a fork-local one: leader
+mode is refused when a sandbox profile other than `off` is requested
+(`docs/user-guide/18-sandbox.md:156`), and killing the leader takes its hosted
+sessions with it. Undo it by deleting the line and running `grok leader kill`.
+
+Three details in the hook are load-bearing, each of them a failure first. The
+hook returns in ~130ms and does its work in a process started with `setsid`,
+because the dispatcher *awaits* even an observe hook — a slow one stalls the
+parent's update loop — and because the runner `killpg`s the hook's process
+group on return, which reaches an ordinary background child but not a new
+session. It retries `herdr agent start` for ~30s, because `pane split` returns
+before the new pane's shell reaches its prompt and starting into it fails with
+`agent_pane_busy` until it does. And the agent name comes from the *tail* of
+the subagent id: a UUIDv7 opens with a timestamp, so two subagents spawned in
+the same millisecond collide on a name Herdr requires to be unique.
+
+Finding the pane to split is the part that fought back, and `use_leader` is why.
+Hooks run in the process hosting the agent — the leader — not in the client you
+are typing into. The leader lives wherever it was first started, so
+`HERDR_PANE_ID`, the process tree, and Herdr's focused pane all name some other
+pane; here they pointed at a session in an unrelated workspace while the client
+sat in another. Herdr exposes no mapping from a Grok session to the pane
+showing it (`agent_session_id` is reported as null). What it does expose is
+which panes hold a `grok` and with which cwd, so the worker takes the pane whose
+cwd matches the session and whose agent has no name — our own watchers are
+named `sub-*` — and falls back to the focused pane. Do not "fix" this back to
+`HERDR_PANE_ID`.
+
+Known sharp edges: the watcher is a full ACP client, not a read-only view, so
+typing into its prompt injects a message into the subagent's session;
+`SubagentStop` does not fire for an interrupted turn, so cancelling a subagent
+(or crashing the parent) orphans its pane and its entry under
+`$TMPDIR/grok-subagent-panes`, both to clear by hand; and several subagents at
+once split the width into unreadable columns.
+`GROK_HERDR_KEEP_SUBAGENT_PANES=1` keeps the panes open for inspection.
+
+Starting whole Grok agents in panes — separate sessions with no inherited
+context, driven over the CLI — is still possible, but it is not the default:
+ask Herdr's own skill for it when a task really wants a peer agent rather than
+a subagent.
 
 Driving Herdr from inside a session is Herdr's own job, not ours: it ships an
 official agent skill, installed with
