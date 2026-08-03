@@ -3,7 +3,7 @@
 #
 #   herdr-subagent-pane.sh start   < SubagentStart payload
 #   herdr-subagent-pane.sh stop    < SubagentStop payload
-#   herdr-subagent-pane.sh worker <subagentId> <cwd>
+#   herdr-subagent-pane.sh worker <subagentId> <cwd> <parentSessionId>
 #
 # `start` returns immediately: the hook dispatcher awaits the hook, so anything
 # slow here would stall the parent's update loop. The real work runs in
@@ -18,6 +18,7 @@ dir=${TMPDIR:-/tmp}/grok-subagent-panes
 if [ "$mode" = worker ]; then
   sid=$2
   cwd=$3
+  psid=$4
   # Not HERDR_PANE_ID: under `use_leader` the hook runs in the leader process,
   # which lives in whatever pane it was first started from — not in the pane
   # holding the client you are typing into. The env, the process tree and the
@@ -75,12 +76,42 @@ if [ "$mode" = worker ]; then
   # starting into it fails with agent_pane_busy until it does.
   i=0
   while [ "$i" -lt 30 ]; do
-    if herdr agent start "$name" --kind grok --pane "$pane" \
-      -- --resume "$sid" >/dev/null 2>&1; then
-      exit 0
-    fi
+    herdr agent start "$name" --kind grok --pane "$pane" \
+      -- --resume "$sid" >/dev/null 2>&1 && break
     i=$((i + 1))
     sleep 1
+  done
+
+  # From here the worker guards the pane. `SubagentStop` closes it on a normal
+  # finish, but that hook never fires for an interrupted turn, and it cannot
+  # fire at all if the parent dies. Both leave an orphan, so watch for them:
+  # a cancelled subagent writes outcome=cancelled into its own events.jsonl
+  # (verified: never present in one that completed), and a dead parent drops
+  # out of the active-session roster.
+  i=0
+  while [ "$i" -lt 10800 ]; do
+    sleep 2
+    i=$((i + 1))
+    [ -f "$dir/$sid" ] || exit 0
+    herdr pane get "$pane" | jq -e '.result.pane.pane_id' >/dev/null 2>&1 ||
+      { rm -f "$dir/$sid"; exit 0; }
+
+    gone=
+    for f in "$HOME"/.grok/sessions/*/"$sid"/events.jsonl; do
+      [ -f "$f" ] && grep -q '"outcome":"cancelled"' "$f" && gone=1
+    done
+    if [ -z "$gone" ] && [ -n "$psid" ]; then
+      ppid=$(jq -r --arg s "$psid" \
+        '.[] | select(.session_id == $s) | .pid' \
+        "$HOME/.grok/active_sessions.json" 2>/dev/null | head -1)
+      { [ -n "$ppid" ] && kill -0 "$ppid" 2>/dev/null; } || gone=1
+    fi
+    [ -n "$gone" ] || continue
+
+    [ -n "${GROK_HERDR_KEEP_SUBAGENT_PANES:-}" ] ||
+      herdr pane close "$pane" >/dev/null 2>&1
+    rm -f "$dir/$sid"
+    exit 0
   done
   exit 0
 fi
@@ -96,8 +127,9 @@ case $mode in
 start)
   cwd=$(printf '%s' "$payload" | jq -r '.cwd // empty')
   [ -n "$cwd" ] || cwd=$PWD
+  psid=$(printf '%s' "$payload" | jq -r '.sessionId // empty')
   python3 -c 'import subprocess,sys; subprocess.Popen(sys.argv[1:], start_new_session=True)' \
-    /bin/sh "$0" worker "$sid" "$cwd" </dev/null >/dev/null 2>&1
+    /bin/sh "$0" worker "$sid" "$cwd" "$psid" </dev/null >/dev/null 2>&1
   ;;
 stop)
   [ -f "$dir/$sid" ] || exit 0
