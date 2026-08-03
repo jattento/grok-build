@@ -228,14 +228,26 @@ named `sub-*` — and falls back to the focused pane. Do not "fix" this back to
 `HERDR_PANE_ID`.
 
 The pane never outlives its subagent, and `SubagentStop` alone cannot promise
-that: it does not fire for an interrupted turn and cannot fire at all if the
-parent dies. So the worker keeps watching after it starts the agent. It closes
-the pane when the subagent's own `events.jsonl` records
-`"outcome":"cancelled"` — verified to be absent from every subagent that
-completed — or when the parent drops out of `~/.grok/active_sessions.json` or
-its pid stops answering `kill -0`. Verified: killing a parent with `SIGKILL`
-clears the pane in under 3s, while cancelling the parent's *turn* leaves a
-still-running subagent alone until it really finishes.
+that: it does not fire for an interrupted turn, it does not fire when the
+provider kills the turn, and it cannot fire at all if the parent dies. So the
+worker keeps watching after it starts the agent. It closes the pane on any of
+three markers, none of which appears in a subagent that completed (checked
+across 200 local sessions):
+
+- `"outcome":"cancelled"` in the subagent's own `events.jsonl` — the turn was
+  interrupted.
+- a `retry_state` update of type `failed` in its `updates.jsonl` — the
+  provider gave up. The same record type also carries `retrying`, so the
+  `type` has to be matched and not just the word. A 401, an exhausted retry
+  budget or a tool schema the backend rejects all end here, and nothing is
+  ever written afterwards.
+- the parent dropping out of `~/.grok/active_sessions.json`, or its pid no
+  longer answering `kill -0`.
+
+Verified: killing a parent with `SIGKILL` clears the pane in under 3s, a
+subagent on a model that 401s clears it in under 4s, and cancelling the
+parent's *turn* leaves a still-running subagent alone until it really
+finishes.
 
 Known sharp edges: the watcher is a full ACP client, not a read-only view, so
 typing into its prompt injects a message into the subagent's session, and
