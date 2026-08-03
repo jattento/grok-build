@@ -3,12 +3,12 @@
 //! Accents are the profile's ANSI-16 palette verbatim, so the TUI agrees with
 //! whatever the shell prints around it.
 //!
-//! Unlike the other RGB themes, the canvas backgrounds are [`Color::Reset`]
-//! rather than the profile's `#160C2A`. Painting that violet would be visually
-//! identical on an opaque terminal but would defeat `background-opacity`:
-//! transparency only survives if the cells stay unpainted. Elevated surfaces
-//! (code blocks, selection, diffs) do get violet tints, since they need to read
-//! as raised against the canvas.
+//! The canvas is painted with the profile's `#160C2A` rather than left as
+//! [`Color::Reset`]. Leaving it unpainted preserves `background-opacity` inside
+//! the pane, but it also makes the pane indistinguishable from any surrounding
+//! multiplexer chrome, which draws on that same unpainted canvas. Painting the
+//! profile background at full opacity keeps the hue identical while the chrome
+//! stays translucent, so the two read as separate surfaces.
 
 use ratatui::style::{Color, Modifier};
 
@@ -25,7 +25,8 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
 mod palette {
     use super::*;
 
-    // ── Elevated surfaces (derived from the #160C2A canvas) ─────────────
+    // ── Canvas and elevated surfaces ────────────────────────────────────
+    pub const BASE: Color = rgb(22, 12, 42); //  #160C2A — profile background
     pub const SURFACE: Color = rgb(30, 17, 56); //  #1E1138 — code blocks
     pub const ELEVATED: Color = rgb(42, 26, 76); //  #2A1A4C — highlight
     pub const HOVER: Color = rgb(53, 34, 94); //  #35225E — hover
@@ -76,9 +77,8 @@ impl Theme {
     /// them to the terminal's supported color level before rendering.
     pub const fn iterm_green() -> Self {
         Self {
-            // Reset keeps the terminal's own (possibly translucent) canvas.
-            bg_base: Color::Reset,
-            bg_terminal: Color::Reset,
+            bg_base: BASE,
+            bg_terminal: BASE,
             bg_light: ELEVATED,
             bg_dark: SURFACE,
             bg_highlight: ELEVATED,
@@ -166,26 +166,33 @@ impl Theme {
 mod tests {
     use super::*;
 
-    /// The canvas must stay unpainted or `background-opacity` stops working.
+    /// The canvas is painted on purpose: an unpainted canvas is the same
+    /// surface a multiplexer's chrome draws on, leaving no visible seam
+    /// between the two. It must stay the profile background exactly, so the
+    /// hue matches the translucent chrome around it.
     #[test]
-    fn canvas_defers_to_the_terminal() {
+    fn canvas_is_the_painted_profile_background() {
         let theme = Theme::iterm_green();
-        assert_eq!(theme.bg_base, Color::Reset);
-        assert_eq!(theme.bg_terminal, Color::Reset);
+        assert_eq!(theme.bg_base, Color::Rgb(0x16, 0x0C, 0x2A));
+        assert_eq!(theme.bg_terminal, Color::Rgb(0x16, 0x0C, 0x2A));
     }
 
-    /// Elevated surfaces must be painted, otherwise code blocks and selection
-    /// are indistinguishable from the canvas.
+    /// Elevations are read against the canvas, so each must be lighter than it.
     #[test]
-    fn elevated_surfaces_are_painted() {
+    fn elevations_sit_above_the_canvas() {
         let theme = Theme::iterm_green();
+        let lum = |c: Color| match c {
+            Color::Rgb(r, g, b) => r as i32 + g as i32 + b as i32,
+            other => panic!("expected Rgb, got {other:?}"),
+        };
+        let base = lum(theme.bg_base);
         for (name, color) in [
             ("bg_dark", theme.bg_dark),
             ("bg_light", theme.bg_light),
+            ("bg_hover", theme.bg_hover),
             ("md_code_bg", theme.md_code_bg),
-            ("bg_visual", theme.bg_visual),
         ] {
-            assert_ne!(color, Color::Reset, "{name} must read as raised");
+            assert!(lum(color) > base, "{name} must be lighter than bg_base");
         }
     }
 
@@ -199,18 +206,13 @@ mod tests {
         assert_eq!(theme.bg_visual, Color::Rgb(0x36, 0x39, 0x83));
     }
 
-    /// `Color::Reset` has no RGB triple to quantize, so it must survive every
-    /// color level unchanged.
+    /// The theme is truecolor-only, so the native values must reach the screen
+    /// untouched when the terminal supports them.
     #[test]
-    fn transparency_survives_quantization() {
+    fn truecolor_passes_through_unquantized() {
         use crate::theme::color_support::ColorLevel;
-        for level in [
-            ColorLevel::Basic,
-            ColorLevel::Ansi256,
-            ColorLevel::TrueColor,
-        ] {
-            let theme = Theme::iterm_green().quantized(level);
-            assert_eq!(theme.bg_base, Color::Reset, "{level:?} painted the canvas");
-        }
+        let theme = Theme::iterm_green().quantized(ColorLevel::TrueColor);
+        assert_eq!(theme.bg_base, Color::Rgb(0x16, 0x0C, 0x2A));
+        assert_eq!(theme.text_primary, Color::Rgb(0x76, 0xE7, 0x65));
     }
 }
