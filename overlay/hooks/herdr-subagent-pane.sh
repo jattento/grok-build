@@ -83,11 +83,16 @@ if [ "$mode" = worker ]; then
   done
 
   # From here the worker guards the pane. `SubagentStop` closes it on a normal
-  # finish, but that hook never fires for an interrupted turn, and it cannot
-  # fire at all if the parent dies. Both leave an orphan, so watch for them:
-  # a cancelled subagent writes outcome=cancelled into its own events.jsonl
-  # (verified: never present in one that completed), and a dead parent drops
-  # out of the active-session roster.
+  # finish, but that hook never fires for an interrupted turn, for a turn the
+  # provider killed, and it cannot fire at all if the parent dies. All three
+  # leave an orphan, so watch for them. A cancelled subagent writes
+  # outcome=cancelled into its own events.jsonl. A subagent whose provider
+  # gave up writes a retry_state of type `failed` into updates.jsonl — the
+  # same record type as `retrying`, which is why the type has to be matched
+  # and not just the word; a 401 or a rejected tool schema ends there and
+  # nothing else is ever written. Neither marker appears in a session that
+  # completed (checked across 200 local sessions). A dead parent drops out of
+  # the active-session roster.
   i=0
   while [ "$i" -lt 10800 ]; do
     sleep 2
@@ -99,6 +104,10 @@ if [ "$mode" = worker ]; then
     gone=
     for f in "$HOME"/.grok/sessions/*/"$sid"/events.jsonl; do
       [ -f "$f" ] && grep -q '"outcome":"cancelled"' "$f" && gone=1
+    done
+    for f in "$HOME"/.grok/sessions/*/"$sid"/updates.jsonl; do
+      [ -f "$f" ] && jq -e 'select(.params.update.sessionUpdate == "retry_state"
+        and .params.update.type == "failed")' "$f" >/dev/null 2>&1 && gone=1
     done
     if [ -z "$gone" ] && [ -n "$psid" ]; then
       ppid=$(jq -r --arg s "$psid" \
