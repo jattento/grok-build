@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "sh \"$HOME/.grok/hooks/herdr-subagent-pane.sh\" start"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "sh \"$HOME/.grok/hooks/herdr-subagent-pane.sh\" stop"
+          }
+        ]
+      }
+    ]
+  }
+}
