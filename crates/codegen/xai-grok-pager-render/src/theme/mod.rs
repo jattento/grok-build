@@ -15,6 +15,7 @@ pub mod color_support;
 pub mod env_appearance;
 mod grokday;
 mod groknight;
+mod iterm;
 pub mod md_style;
 pub mod osc11;
 mod oscura;
@@ -34,6 +35,7 @@ pub enum ThemeKind {
     TokyoNight = 2,
     RosePineMoon = 3,
     OscuraMidnight = 5,
+    ItermGreen = 6,
     /// Meta-variant: follow system dark/light appearance.
     ///
     /// Never stored in `cache::CURRENT` — resolved to a concrete
@@ -52,6 +54,7 @@ impl ThemeKind {
         ThemeKind::TokyoNight,
         ThemeKind::RosePineMoon,
         ThemeKind::OscuraMidnight,
+        ThemeKind::ItermGreen,
     ];
 
     /// Theme kinds available on the current terminal.
@@ -79,6 +82,7 @@ impl ThemeKind {
             Self::GrokDay => "grokday",
             Self::RosePineMoon => "rosepine-moon",
             Self::OscuraMidnight => "oscura-midnight",
+            Self::ItermGreen => "iterm-green",
             Self::Auto => "auto",
         }
     }
@@ -95,6 +99,9 @@ impl ThemeKind {
             Self::GrokDay => false,
             Self::RosePineMoon => true,
             Self::OscuraMidnight => true,
+            // Violet elevations and the green ramp both collapse to flat
+            // ANSI green once quantized, erasing the depth cues.
+            Self::ItermGreen => true,
             // Auto is resolved to a concrete theme before rendering.
             Self::Auto => false,
         }
@@ -113,6 +120,7 @@ impl ThemeKind {
                 Some(Self::RosePineMoon)
             }
             "oscura" | "oscura-midnight" => Some(Self::OscuraMidnight),
+            "iterm" | "iterm2" | "iterm-green" | "itermgreen" => Some(Self::ItermGreen),
             _ => None,
         }
     }
@@ -148,6 +156,7 @@ pub fn display_name_for_canonical(value: &str) -> &str {
         "grokday" => "Grok Day",
         "tokyonight" => "Tokyo Night",
         "rosepine-moon" => "Rose Pine Moon",
+        "iterm-green" => "iTerm Green",
         other => other,
     }
 }
@@ -274,6 +283,7 @@ impl Theme {
             ThemeKind::GrokDay => Self::grokday(),
             ThemeKind::RosePineMoon => Self::rosepine_moon(),
             ThemeKind::OscuraMidnight => Self::oscura_midnight(),
+            ThemeKind::ItermGreen => Self::iterm_green(),
             // Auto is resolved to a concrete theme before being stored;
             // if reached, fall back to GrokNight.
             ThemeKind::Auto => Self::groknight(),
@@ -1063,6 +1073,7 @@ mod tests {
                 ThemeKind::TokyoNight => Theme::tokyonight(),
                 ThemeKind::RosePineMoon => Theme::rosepine_moon(),
                 ThemeKind::OscuraMidnight => Theme::oscura_midnight(),
+                ThemeKind::ItermGreen => Theme::iterm_green(),
                 ThemeKind::Auto => unreachable!("ALL excludes Auto"),
             };
             let track = lum(theme.scrollbar_bg, "scrollbar_bg", kind);
