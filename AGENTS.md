@@ -207,12 +207,19 @@ cwd matches the session and whose agent has no name — our own watchers are
 named `sub-*` — and falls back to the focused pane. Do not "fix" this back to
 `HERDR_PANE_ID`.
 
+The pane never outlives its subagent, and `SubagentStop` alone cannot promise
+that: it does not fire for an interrupted turn and cannot fire at all if the
+parent dies. So the worker keeps watching after it starts the agent. It closes
+the pane when the subagent's own `events.jsonl` records
+`"outcome":"cancelled"` — verified to be absent from every subagent that
+completed — or when the parent drops out of `~/.grok/active_sessions.json` or
+its pid stops answering `kill -0`. Verified: killing a parent with `SIGKILL`
+clears the pane in under 3s, while cancelling the parent's *turn* leaves a
+still-running subagent alone until it really finishes.
+
 Known sharp edges: the watcher is a full ACP client, not a read-only view, so
-typing into its prompt injects a message into the subagent's session;
-`SubagentStop` does not fire for an interrupted turn, so cancelling a subagent
-(or crashing the parent) orphans its pane and its entry under
-`$TMPDIR/grok-subagent-panes`, both to clear by hand; and several subagents at
-once split the width into unreadable columns.
+typing into its prompt injects a message into the subagent's session, and
+several subagents at once split the height into unreadable rows.
 `GROK_HERDR_KEEP_SUBAGENT_PANES=1` keeps the panes open for inspection.
 
 Starting whole Grok agents in panes — separate sessions with no inherited
