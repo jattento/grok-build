@@ -188,6 +188,13 @@ before the new pane's shell reaches its prompt and starting into it fails with
 the subagent id: a UUIDv7 opens with a timestamp, so two subagents spawned in
 the same millisecond collide on a name Herdr requires to be unique.
 
+The layout is fixed: the parent keeps the whole left half and subagents stack
+down the right one. The first subagent splits the parent `right` at ratio 0.5,
+every later one splits the newest live watcher `down`, and placement runs under
+a `mkdir` lock because two subagents starting together would otherwise both see
+an empty right column and open two of them. The right column only exists while
+a subagent does — the parent reclaims the full width once the last pane closes.
+
 Finding the pane to split is the part that fought back, and `use_leader` is why.
 Hooks run in the process hosting the agent — the leader — not in the client you
 are typing into. The leader lives wherever it was first started, so

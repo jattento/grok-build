@@ -28,17 +28,45 @@ if [ "$mode" = worker ]; then
     jq -r --arg c "$cwd" '.result.agents[]
       | select(.agent == "grok" and .cwd == $c and .name == null)
       | .pane_id' | head -1)
-  if [ -n "$parent" ]; then
-    pane=$(herdr pane split --pane "$parent" --direction right --cwd "$cwd" \
+
+  # The layout is: the parent keeps the whole left half, subagents stack down
+  # the right one. So the first subagent splits the parent to the right, and
+  # every later one splits the newest live watcher downwards. Placement is
+  # serialized, or two subagents starting together would both see an empty
+  # right column and open two of them.
+  mkdir -p "$dir"
+  i=0
+  while ! mkdir "$dir/.lock" 2>/dev/null; do
+    i=$((i + 1))
+    [ "$i" -lt 60 ] || break
+    sleep 1
+  done
+
+  anchor=
+  for f in $(ls -t "$dir" 2>/dev/null); do
+    case $f in .*) continue ;; esac
+    p=$(cat "$dir/$f" 2>/dev/null)
+    [ -n "$p" ] || continue
+    live=$(herdr pane get "$p" | jq -r '.result.pane.pane_id // empty')
+    [ -n "$live" ] || continue
+    anchor=$p
+    break
+  done
+
+  if [ -n "$anchor" ]; then
+    pane=$(herdr pane split --pane "$anchor" --direction down --cwd "$cwd" \
       --no-focus | jq -r '.result.pane.pane_id // empty')
+  elif [ -n "$parent" ]; then
+    pane=$(herdr pane split --pane "$parent" --direction right --ratio 0.5 \
+      --cwd "$cwd" --no-focus | jq -r '.result.pane.pane_id // empty')
   else
     # Last resort: Herdr's focused pane.
-    pane=$(herdr pane split --direction right --cwd "$cwd" \
+    pane=$(herdr pane split --direction right --ratio 0.5 --cwd "$cwd" \
       --no-focus | jq -r '.result.pane.pane_id // empty')
   fi
+  [ -n "$pane" ] && printf %s "$pane" >"$dir/$sid"
+  rmdir "$dir/.lock" 2>/dev/null
   [ -n "$pane" ] || exit 0
-  mkdir -p "$dir"
-  printf %s "$pane" >"$dir/$sid"
   # Tail, not head: a UUIDv7 starts with a timestamp, so two subagents spawned
   # in the same millisecond share their leading hex and would collide on a name
   # Herdr requires to be unique among live agents.
