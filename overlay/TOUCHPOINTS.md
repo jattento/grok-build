@@ -114,3 +114,33 @@ Template for new entries:
   thought through the local gateway, so the fork is unusable with reasoning
   models without it. Serde attributes have no config or overlay seam.
 - Retire when: upstream tolerates thinking blocks that carry only a signature.
+
+### `crates/codegen/xai-grok-pager-render/src/theme/iterm.rs`
+
+- What: a new file holding the `iterm-green` theme, an iTerm2 profile (green
+  `#76E765` on violet `#160C2A`) ported into the pager.
+- Why here: themes are built by `Theme` constructors that the render crate
+  dispatches internally; there is no registry an overlay package could add to.
+- Retire when: upstream accepts user-defined themes from config, which would
+  turn this into a `~/.grok` file and drop the delta to zero.
+
+### `crates/codegen/xai-grok-pager-render/src/theme/mod.rs`
+
+- What: registers that theme — a `ThemeKind::ItermGreen = 6` variant plus its
+  `mod iterm;`, display name, parse aliases, quantization flag, and the two
+  dispatch arms that map the kind to `Theme::iterm_green()`.
+- Why here: `ThemeKind` is a closed enum with exhaustive matches, so a new
+  theme cannot be added from outside the crate.
+- Retire when: same as above.
+
+### `crates/codegen/xai-grok-pager-render/src/theme/cache.rs`
+
+- What: one line adding the new kind to the cached theme table.
+- Why here: the cache enumerates every `ThemeKind`.
+- Retire when: same as above.
+
+### `crates/codegen/xai-grok-pager-render/src/syntax.rs`
+
+- What: one line adding the new kind to the syntax-highlighting match.
+- Why here: the match over `ThemeKind` is exhaustive.
+- Retire when: same as above.
