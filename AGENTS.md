@@ -132,6 +132,26 @@ upstream API that changed under us.
 
 Building from source needs `dotslash` on `PATH` (see `README.md`).
 
+Cargo never collects garbage: every rebuild adds artifacts and removes none, so
+`target/` only grows. It reached 25 GB here, against a 160 MB binary. Two
+directories hold almost all of it, and both are caches that a build rebuilds on
+demand:
+
+- `target/release/incremental` — upstream turns incremental on for release
+  (`Cargo.toml:341`) to keep local rebuilds fast, at the cost of the largest
+  single directory in the tree.
+- `target/debug` — `grk` and `--release` never write here; it exists because
+  `cargo check` and `cargo test` use the dev profile.
+
+Reclaim them when a task is done, not between the builds inside one:
+
+```sh
+rm -rf target/release/incremental target/debug
+```
+
+Deleting either mid-task only buys space back by making the next `cargo check`,
+`cargo test`, or `grk --rebuild` in that same task recompile from scratch.
+
 ## Herdr
 
 [Herdr](https://herdr.dev) is the terminal multiplexer we run this build in. It
@@ -262,3 +282,5 @@ A change is finished when all of these hold:
 - `overlay/scripts/overlay-diff.sh` passes.
 - The overlay packages and the binary compile, and overlay tests pass.
 - Our commits are separable and prefixed `overlay:`.
+- `target/release/incremental` and `target/debug` are deleted, now that nothing
+  else in the task needs them.
