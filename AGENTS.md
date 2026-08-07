@@ -296,3 +296,35 @@ A change is finished when all of these hold:
 - Our commits are separable and prefixed `overlay:`.
 - `target/release/incremental` and `target/debug` are deleted, now that nothing
   else in the task needs them.
+- The public repository and release discipline below is complete.
+
+## Public repository and release discipline
+
+- This fork and its `origin` repository must remain public.
+- Never commit or release credentials, tokens, cookies, private keys, auth
+  files, credentialed URLs, user data, or real machine-specific private paths.
+  Before every push and release, scan `origin/main..HEAD`, tracked and
+  untracked files, the final binary, archives, checksums, and release notes
+  with Gitleaks plus targeted credential-pattern and local-path checks.
+- A completed change is not done when it only works locally. Once the requested
+  change is validated and accepted, commit it and push `main` without waiting
+  for a separate user request.
+- Create the next immutable `v<upstream-version>-overlay.<n>` tag and public
+  GitHub Release only when the distributable Grok binary changes. Documentation,
+  policy, and other source-only changes are pushed without compiling or
+  releasing a new binary unless the user explicitly asks for one.
+- Before an upstream sync or release, fetch `origin` and prove that the commit
+  being published contains the current `origin/main`. Fast-forward stale local
+  `main` refs or checkouts before running `sync-upstream.sh`; never let a stale
+  worktree force-push over newer public commits.
+- Build each release from the exact tagged commit with an explicit
+  `GROK_VERSION`, remap local build paths, produce a stripped ad-hoc-signed
+  macOS arm64 binary, and attach the direct binary, a license-complete archive,
+  `SHA256SUMS`, release notes, the exact commit, and validation results.
+- Verify that `origin/main`, the annotated tag, the GitHub Release, GitHub's
+  uploaded asset digests, and the locally installed `~/bin/grok` binary all
+  resolve to the same audited commit and checksums.
+- Preserve every previous release and tag as a rollback point. Never move a
+  published version tag or replace an existing release asset. A force-push is
+  allowed only for the documented upstream-sync rebase flow and only with its
+  required `pre-sync/*` rollback tag.
