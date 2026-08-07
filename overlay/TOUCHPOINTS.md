@@ -21,12 +21,37 @@ Template for new entries:
 
 ### `Cargo.toml`
 
-- What: adds `overlay/overlay-core` to `[workspace] members`.
+- What: adds `overlay/overlay-core` and `overlay/overlay-subagent-router` to
+  `[workspace] members`.
 - Why here: cargo requires workspace members to be listed in the root manifest,
   and the header of that file says it is auto-generated upstream, so the line
   will keep disappearing on syncs.
 - Retire when: never, while any overlay package exists. Expect a one-line
   conflict per sync; `git rerere` replays the resolution.
+
+### `crates/common/xai-tool-types/src/task.rs`
+
+- What: adds `task_type`, `complexity`, `requires_vision` on `TaskToolInput`,
+  and rewrites the `model` schemars description as error-path override only.
+- Why here: the parent-facing tool schema is defined in this shared crate;
+  hooks cannot change JSON schema fields the model sees.
+- Retire when: upstream adds first-class intent routing fields (unlikely).
+
+### `crates/codegen/xai-grok-tools/Cargo.toml`
+
+- What: path dependency on `overlay-subagent-router`.
+- Why here: `TaskTool` lives in this package and must call the router at spawn.
+- Retire when: never, while TaskTool applies overlay routing.
+
+### `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs`
+
+- What: `resolve_subagent_route` at the start of `TaskTool::run`; applies
+  router model, effort, and tool ceiling (`subagent_type`) before validation
+  and `SubagentRequest` build.
+- Why here: this is the single model-facing spawn entry for the `task` tool;
+  resolution in shell alone would miss inputs only present on the tool args.
+- Retire when: upstream exposes a spawn-time routing hook with equivalent
+  fields.
 
 ### `crates/codegen/xai-grok-pager-bin/Cargo.toml`
 

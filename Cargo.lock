@@ -7298,6 +7298,19 @@ name = "overlay-core"
 version = "0.1.0"
 
 [[package]]
+name = "overlay-subagent-router"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "p256"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14470,6 +14483,7 @@ dependencies = [
  "libc",
  "minijinja",
  "nix 0.30.1",
+ "overlay-subagent-router",
  "parking_lot",
  "pdf_oxide",
  "pretty_assertions",

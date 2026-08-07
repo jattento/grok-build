@@ -170,6 +170,92 @@ async fn resolve_background_notice_names(resources: &SharedResources) -> (String
     )
 }
 
+/// Resolve model / effort / agent type via `overlay-subagent-router`.
+///
+/// Returns `(model, effort, Some(subagent_type), provenance)`.
+/// When `task_type` is absent, keeps legacy behaviour (caller `subagent_type`,
+/// optional explicit model only).
+fn resolve_subagent_route(
+    input: &TaskToolInput,
+    model_override: Option<String>,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    ModelOverrideProvenance,
+) {
+    use overlay_subagent_router::{
+        OsascriptNotifier, RouteInput, RouteSource, load_config, process_global_codexbar_sensor,
+        resolve_config_path, resolve_for_spawn, seed_config_if_missing,
+    };
+
+    let has_task_type = input
+        .task_type
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty());
+
+    // Legacy path: no task_type → parent picks subagent_type; model only if override.
+    if !has_task_type {
+        let provenance = if model_override.is_some() {
+            ModelOverrideProvenance::Tool
+        } else {
+            ModelOverrideProvenance::Harness
+        };
+        return (model_override, None, None, provenance);
+    }
+
+    let config_path = resolve_config_path();
+    let _ = seed_config_if_missing(&config_path);
+    let router_cfg = load_config(&config_path).ok();
+    let cache_ttl = router_cfg
+        .as_ref()
+        .map(|c| c.sensor.cache_ttl_secs)
+        .unwrap_or(90);
+
+    let route_input = RouteInput {
+        task_type: input.task_type.clone(),
+        complexity: input.complexity.clone(),
+        requires_vision: input.requires_vision,
+        model_override: model_override.clone(),
+    };
+
+    // Process-wide cached CodexBar sensor so TTL survives across TaskTool spawns.
+    // timeout_secs is enforced inside CodexBarSensor (kills hung CLI probes).
+    let sensor = process_global_codexbar_sensor(cache_ttl);
+    let notifier = match router_cfg {
+        Some(c) => OsascriptNotifier {
+            command: c.sensor.notify_command,
+        },
+        None => OsascriptNotifier::default(),
+    };
+
+    let decision = resolve_for_spawn(&route_input, None, Some(&config_path), sensor, &notifier);
+
+    let tool_ceiling = decision.tool_ceiling.clone();
+    let provenance = match decision.source {
+        RouteSource::ModelOverride => ModelOverrideProvenance::Tool,
+        _ => ModelOverrideProvenance::Harness,
+    };
+
+    tracing::info!(
+        target: "subagent_router",
+        source = ?decision.source,
+        model = ?decision.model,
+        effort = ?decision.effort,
+        tool_ceiling = %tool_ceiling,
+        reason = %decision.reason,
+        "subagent router decision"
+    );
+
+    (
+        decision.model,
+        decision.effort,
+        Some(tool_ceiling),
+        provenance,
+    )
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Tool implementation
 // ───────────────────────────────────────────────────────────────────────────
@@ -372,15 +458,16 @@ impl xai_tool_runtime::Tool for TaskTool {
         }
 
         // Treat blank/empty/"null" resume_from as absent (models sometimes emit these).
-        let resume_from = input.resume_from.and_then(|s| {
+        let resume_from = input.resume_from.as_ref().and_then(|s| {
             let trimmed = s.trim();
             is_valid_resume_id(trimmed).then(|| trimmed.to_string())
         });
 
         // Model overrides are soft-ignored on resume (source model is always pinned).
-        let model = xai_tool_types::sanitize_optional_arg(input.model);
-        let model = if resume_from.is_some() {
-            if let Some(ref ignored) = model {
+        let model_override = xai_tool_types::sanitize_optional_arg(input.model.clone());
+        let had_tool_model_override = model_override.is_some();
+        let model_override = if resume_from.is_some() {
+            if let Some(ref ignored) = model_override {
                 tracing::debug!(
                     model = %ignored,
                     "ignoring model override because resume_from is set"
@@ -388,8 +475,20 @@ impl xai_tool_runtime::Tool for TaskTool {
             }
             None
         } else {
-            model
+            model_override
         };
+
+        // Subagent router: task_type + complexity → model, effort, tool ceiling.
+        // Error-path model_override is honored blindly with a macOS notification.
+        let (routed_model, routed_effort, routed_subagent_type, mut model_provenance) =
+            resolve_subagent_route(&input, model_override.clone());
+        if had_tool_model_override {
+            model_provenance = ModelOverrideProvenance::Tool;
+        }
+        let model = routed_model;
+        // Prefer router-derived type when task_type was provided.
+        let effective_subagent_type =
+            routed_subagent_type.unwrap_or_else(|| input.subagent_type.clone());
 
         // Treat blank/empty/"null" cwd as absent (models sometimes emit these).
         // Also strip stray surrounding quote characters and expand `~`.
@@ -440,7 +539,7 @@ impl xai_tool_runtime::Tool for TaskTool {
         //    types before the fire-and-forget background spawn.
         match backend
             .backend()
-            .validate_type(&input.subagent_type, &parent_session_id)
+            .validate_type(&effective_subagent_type, &parent_session_id)
             .await
         {
             SubagentValidateTypeOutcome::Ok => {}
@@ -452,20 +551,20 @@ impl xai_tool_runtime::Tool for TaskTool {
                 };
                 return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
                     "Unknown subagent type: {}{suffix}",
-                    input.subagent_type
+                    effective_subagent_type
                 )));
             }
             SubagentValidateTypeOutcome::Disabled => {
                 return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
                     "Subagent '{}' is disabled via [subagents.toggle] in config.toml",
-                    input.subagent_type
+                    effective_subagent_type
                 )));
             }
             SubagentValidateTypeOutcome::NotAllowed { allowed } => {
                 return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
                     "agent can only spawn: {}; '{}' not allowed",
                     allowed.join(", "),
-                    input.subagent_type
+                    effective_subagent_type
                 )));
             }
             SubagentValidateTypeOutcome::ValidationUnavailable => {
@@ -476,7 +575,7 @@ impl xai_tool_runtime::Tool for TaskTool {
                     format!(
                         "Cannot validate subagent type '{}': the subagent coordinator is \
                          unreachable. Retry shortly or notify ops.",
-                        input.subagent_type
+                        effective_subagent_type
                     ),
                 ));
             }
@@ -516,15 +615,15 @@ impl xai_tool_runtime::Tool for TaskTool {
             id: id.clone(),
             prompt: input.prompt.clone(),
             description: input.description.clone(),
-            subagent_type: input.subagent_type.clone(),
+            subagent_type: effective_subagent_type.clone(),
             parent_session_id,
             parent_prompt_id,
             resume_from,
             cwd,
             runtime_overrides: SubagentRuntimeOverrides {
                 model,
-                model_override_provenance: ModelOverrideProvenance::Tool,
-                reasoning_effort: None,
+                model_override_provenance: model_provenance,
+                reasoning_effort: routed_effort,
                 persona: None,
                 // JSON cannot set this field. Compat-harness adapters still
                 // populate it in-process; model-facing spawns stay `None`.
@@ -556,7 +655,7 @@ impl xai_tool_runtime::Tool for TaskTool {
         if input.run_in_background {
             let bg_backend = backend.clone();
             let bg_id = id.clone();
-            let bg_type = input.subagent_type.clone();
+            let bg_type = effective_subagent_type.clone();
             tokio::spawn(async move {
                 match bg_backend.backend().spawn(request).await {
                     Err(e) => {
@@ -754,6 +853,9 @@ mod tests {
             TaskToolInput {
                 description: "test task".into(),
                 prompt: "do something".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -787,6 +889,9 @@ mod tests {
             TaskToolInput {
                 description: "nested ok".into(),
                 prompt: "should be allowed at max_depth=2".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "explore".into(),
                 run_in_background: true,
                 capability_mode: None,
@@ -821,6 +926,9 @@ mod tests {
             TaskToolInput {
                 description: "nested spawn".into(),
                 prompt: "should be rejected".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "explore".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -852,6 +960,9 @@ mod tests {
             TaskToolInput {
                 description: "test task".into(),
                 prompt: "do something".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -910,6 +1021,9 @@ mod tests {
             TaskToolInput {
                 description: "Find auth middleware".into(),
                 prompt: "Search for authentication middleware files".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "explore".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -966,6 +1080,9 @@ mod tests {
             TaskToolInput {
                 description: "test task".into(),
                 prompt: "do something".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -1009,6 +1126,9 @@ mod tests {
             TaskToolInput {
                 description: "test task".into(),
                 prompt: "do something".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -1117,6 +1237,9 @@ mod tests {
         TaskToolInput {
             description: "test".into(),
             prompt: "do it".into(),
+            task_type: None,
+            complexity: None,
+            requires_vision: false,
             subagent_type: subagent_type.into(),
             run_in_background: background,
             capability_mode: None,
@@ -1637,11 +1760,14 @@ mod tests {
         let schema = serde_json::to_value(schemars::schema_for!(TaskToolInput)).unwrap();
         assert_eq!(
             schema["properties"]["model"]["description"],
-            "Optional model slug for this agent. If provided, it must resolve to one of the \
-             available model slugs. If omitted, the subagent uses the same model as the parent \
-             agent. Do not pass if resume_from is set (prior model will be used). Only choose \
-             an explicit model when the user directly requests it."
+            "Error-path ONLY model override. Leave unset for normal routing \
+             (task_type+complexity select the model). Set only when a previous child for this \
+             work failed/was unusable; must be a valid model slug. Do not pass with resume_from. \
+             Using this override triggers a macOS notification."
         );
+        assert!(schema["properties"]["task_type"].is_object());
+        assert!(schema["properties"]["complexity"].is_object());
+        assert!(schema["properties"]["requires_vision"].is_object());
     }
 
     #[test]
@@ -1667,6 +1793,9 @@ mod tests {
         let input = TaskToolInput {
             description: "find bugs".into(),
             prompt: "search for bugs".into(),
+            task_type: None,
+            complexity: None,
+            requires_vision: false,
             subagent_type: "explore".into(),
             run_in_background: true,
             capability_mode: Some(SubagentCapabilityMode::ReadOnly),
@@ -1935,6 +2064,9 @@ mod tests {
         let serialized = serde_json::to_string(&TaskToolInput {
             description: "d".into(),
             prompt: "p".into(),
+            task_type: None,
+            complexity: None,
+            requires_vision: false,
             subagent_type: "general-purpose".into(),
             run_in_background: false,
             capability_mode: None,
@@ -1984,6 +2116,9 @@ mod tests {
             TaskToolInput {
                 description: "d".into(),
                 prompt: "p".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2020,6 +2155,9 @@ mod tests {
         let input = TaskToolInput {
             description: "d".into(),
             prompt: "p".into(),
+            task_type: None,
+            complexity: None,
+            requires_vision: false,
             subagent_type: "general-purpose".into(),
             run_in_background: false,
             capability_mode: None,
@@ -2066,6 +2204,9 @@ mod tests {
             TaskToolInput {
                 description: "resume".into(),
                 prompt: "continue".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2132,6 +2273,9 @@ mod tests {
                 TaskToolInput {
                     description: "test sentinel".into(),
                     prompt: "work".into(),
+                    task_type: None,
+                    complexity: None,
+                    requires_vision: false,
                     subagent_type: "general-purpose".into(),
                     run_in_background: false,
                     capability_mode: None,
@@ -2178,6 +2322,9 @@ mod tests {
         let input = TaskToolInput {
             description: "d".into(),
             prompt: "p".into(),
+            task_type: None,
+            complexity: None,
+            requires_vision: false,
             subagent_type: "general-purpose".into(),
             run_in_background: false,
             capability_mode: None,
@@ -2206,6 +2353,9 @@ mod tests {
             TaskToolInput {
                 description: "test cwd conflict".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2260,6 +2410,9 @@ mod tests {
             TaskToolInput {
                 description: "test empty cwd".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2310,6 +2463,9 @@ mod tests {
             TaskToolInput {
                 description: "test null cwd".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2360,6 +2516,9 @@ mod tests {
             TaskToolInput {
                 description: "test whitespace cwd".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2413,6 +2572,9 @@ mod tests {
             TaskToolInput {
                 description: "test nonexistent cwd".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2447,6 +2609,9 @@ mod tests {
             TaskToolInput {
                 description: "test nonexistent cwd no worktree".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2502,6 +2667,9 @@ mod tests {
                 TaskToolInput {
                     description: "test sentinel cwd".into(),
                     prompt: "work".into(),
+                    task_type: None,
+                    complexity: None,
+                    requires_vision: false,
                     subagent_type: "general-purpose".into(),
                     run_in_background: false,
                     capability_mode: None,
@@ -2555,6 +2723,9 @@ mod tests {
             TaskToolInput {
                 description: "cwd test".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2612,6 +2783,9 @@ mod tests {
             TaskToolInput {
                 description: "stray quote cwd".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2664,6 +2838,9 @@ mod tests {
             TaskToolInput {
                 description: "cwd with none".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
@@ -2712,6 +2889,9 @@ mod tests {
             TaskToolInput {
                 description: "cwd + resume".into(),
                 prompt: "work".into(),
+                task_type: None,
+                complexity: None,
+                requires_vision: false,
                 subagent_type: "general-purpose".into(),
                 run_in_background: false,
                 capability_mode: None,
