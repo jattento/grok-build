@@ -1,0 +1,386 @@
+# Subagent Router — model/effort/tool selection for child agents
+#
+# Parent sends: task_type + complexity + requires_vision
+#               (+ optional error-path model override).
+# This file decides: candidate models, reasoning effort, tool ceiling, vision
+# filter, and how CodexBar quota breaks ties.
+#
+# Docs (fork): overlay/subagent-router/CONTEXT.md
+# Sensor:     codexbar usage --format json  (must be on PATH)
+
+# ── Sensor (CodexBar CLI) ────────────────────────────────────────────────────
+
+[sensor]
+# Binary name or absolute path. Default install: /opt/homebrew/bin/codexbar
+command = "codexbar"
+
+# Base args; the router appends --provider <id> for each needed provider.
+# Full multi-provider probes can take ~1–2 minutes — never use "all" on the hot path.
+usage_args = ["usage", "--format", "json"]
+
+# How long a successful usage snapshot is reused (seconds).
+cache_ttl_secs = 90
+
+# Per-provider fetch deadline (seconds). Timed-out providers are dropped and
+# trigger a macOS notification (any single failure notifies). Probes run in
+# parallel, so one hung provider no longer serializes the rest.
+timeout_secs = 25
+
+# When live `codexbar usage` fails, accept the CodexBar menu-bar app's history
+# sample if newer than this many seconds (0 = disable). Covers OpenCode when
+# the CLI cannot import browser cookies in the background.
+history_fallback_max_age_secs = 43200
+
+notify_on_provider_error = true
+# macOS notification: auto | osascript | terminal-notifier | none
+# `auto` prefers terminal-notifier when installed, else osascript + Glass sound
+# + afplay so banners aren't silent when Script Editor NC is off.
+notify_command = "auto"
+
+# ── Usage windows ────────────────────────────────────────────────────────────
+# CodexBar returns primary/secondary/tertiary (+ extraRateWindows) with
+# usedPercent + windowMinutes — not named session/weekly/monthly.
+# We classify by duration, then:
+#   1) veto if any *present* window is exhausted
+#   2) rank survivors by weekly-class remaining / time-to-reset
+#   3) session-class as fine tiebreak
+# Credits (e.g. codex credits.remaining) are informational only.
+
+[windows]
+# remaining% = 100 - usedPercent. At or below this floor → exhaustion veto.
+min_remaining_percent = 1
+
+# Class thresholds (minutes). Tune if a provider invents weird windows.
+session_max_minutes = 360       # ≤ 6h  → session
+weekly_min_minutes  = 1440      # ≥ 1d
+weekly_max_minutes  = 11520     # ≤ 8d  → weekly
+monthly_min_minutes = 40320     # ≥ 28d → monthly
+
+# Include CodexBar extraRateWindows[] in the exhaustion veto set.
+include_extra_rate_windows = true
+
+# Do not treat credits.remaining == 0 as a veto.
+credits_are_informational = true
+
+# Ranking: among non-vetoed fit candidates, prefer higher remaining on the
+# weekly-class window, then sooner weekly reset (burn what renews soon),
+# then session-class remaining.
+rank_primary = "weekly"
+rank_secondary = "session"
+
+# ── Tool ceiling (derived from task_type; parent does not pick this) ─────────
+# scout → explore (read/search/shell, no edits)
+# everything else → general-purpose
+# Plan stays on the parent agent — not a child task type.
+
+[tool_ceiling]
+scout      = "explore"
+debug      = "general-purpose"
+implement  = "general-purpose"
+design     = "general-purpose"
+review     = "general-purpose"
+
+# ── Fallback & error-path override ───────────────────────────────────────────
+
+[fallback]
+# If no fit candidate has usable quota (or every sensor path fails), spawn with
+# the parent session model and continue.
+use_parent_model = true
+
+[override]
+# Optional `model` on the spawn tool: error-path only (tool description must say so).
+# Honored blindly (no fit / quota / vision veto). Always notifies on macOS when present.
+enabled = true
+notify_on_use = true
+# Soft policy only (no hard check that a prior child failed). Enforcement = prompt + notify.
+require_prior_failure = false
+
+# ── Vision ───────────────────────────────────────────────────────────────────
+# Tool arg: requires_vision (bool, default false).
+# When true, drop every catalog model with supports_vision = false (NV / no-vision)
+# from the route cell BEFORE quota ranking. Parent should set true if the child
+# must read images/screenshots/UI captures in the prompt or tools.
+#
+# NV in Grok display names ≈ no vision. Marked supports_vision = false below.
+
+[vision]
+# Default for the tool when the parent omits the field.
+default_requires_vision = false
+# If requires_vision and every candidate is filtered out → parent-model fallback
+# (same as empty quota pool), unless error-path model override is set.
+fallback_when_none = "parent"
+
+# ── Model catalog: Grok slug → CodexBar provider + capabilities ──────────────
+# Every slug referenced in [routes.*] MUST appear here.
+# provider ids must match CodexBar (claude, codex, gemini, opencodego, copilot, …).
+# supports_vision = false  →  "NV" (no vision); excluded when requires_vision = true
+
+[models.claude-fable-5]
+provider = "claude"
+supports_reasoning_effort = true
+supports_vision = true
+
+[models.claude-opus-5]
+provider = "claude"
+supports_reasoning_effort = true
+supports_vision = true
+
+[models.claude-sonnet-5]
+provider = "claude"
+supports_reasoning_effort = true
+supports_vision = true
+
+[models.claude-haiku-4-5-20251001]
+provider = "claude"
+supports_reasoning_effort = true
+supports_vision = true
+
+[models."gpt-5.6-sol"]
+provider = "codex"
+supports_reasoning_effort = true
+supports_vision = true
+
+[models."gpt-5.6-terra"]
+provider = "codex"
+supports_reasoning_effort = true
+supports_vision = true
+
+[models."gpt-5.6-luna"]
+provider = "codex"
+supports_reasoning_effort = true
+supports_vision = true
+
+[models."gemini-3.1-pro-preview"]
+provider = "gemini"
+supports_reasoning_effort = false
+supports_vision = true
+
+[models."gemini-3.1-flash-lite"]
+provider = "gemini"
+supports_reasoning_effort = false
+supports_vision = true
+
+# Built-in xAI (default session model). Not under [model.*] cliproxy — still a first-class child.
+# CodexBar provider id: grok (session/plan window; verified via `codexbar usage --provider grok`).
+[models."grok-4.5"]
+provider = "grok"
+supports_reasoning_effort = true
+supports_vision = true
+
+# OpenCode — (NV) in display name = no vision
+[models.opencode-deepseek-v4-pro]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = false   # NV
+
+[models."opencode-glm-5.1"]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = false   # NV
+
+[models."opencode-glm-5.2"]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = false   # NV
+
+[models.opencode-hy3]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = false   # NV
+
+[models.opencode-kimi-k3]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = true
+
+[models."opencode-mimo-v2.5"]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = true
+
+[models."opencode-minimax-m2.7"]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = false   # NV
+
+[models.opencode-minimax-m3]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = true
+
+[models."opencode-qwen3.6-plus"]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = true
+
+[models."opencode-qwen3.7-max"]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = false   # NV
+
+[models."opencode-qwen3.7-plus"]
+provider = "opencodego"
+supports_reasoning_effort = false
+supports_vision = true
+
+# ── Routes: task_type × complexity → candidates + effort ─────────────────────
+# `models` = ordered preference BEFORE vision filter + quota tiebreak (fit list).
+# Pipeline: route cell → drop NV if requires_vision → quota veto/rank → pick.
+# `effort` is applied only if supports_reasoning_effort = true for the winner.
+#
+# Tiers used below (edit freely):
+#   cheap  = haiku, luna, flash-lite, smaller opencode
+#   mid    = sonnet, terra, grok-4.5, gemini-pro, qwen-plus, minimax-m3, glm
+#   top    = opus, fable, sol, grok-4.5, qwen-max
+
+# ── scout (tool ceiling: explore) ────────────────────────────────────────────
+
+[routes.scout.low]
+models = [
+  "claude-haiku-4-5-20251001",
+  "gemini-3.1-flash-lite",
+  "gpt-5.6-luna",
+  "opencode-mimo-v2.5",
+  "opencode-qwen3.6-plus",
+]
+effort = "medium"
+
+[routes.scout.medium]
+models = [
+  "claude-haiku-4-5-20251001",
+  "grok-4.5",
+  "gemini-3.1-flash-lite",
+  "gpt-5.6-luna",
+  "opencode-mimo-v2.5",
+  "opencode-qwen3.6-plus",
+]
+effort = "high"
+
+[routes.scout.high]
+models = [
+  "claude-sonnet-5",
+  "grok-4.5",
+  "gpt-5.6-terra",
+  "gemini-3.1-pro-preview",
+  "opencode-qwen3.7-plus",
+  "claude-haiku-4-5-20251001",
+]
+effort = "high"
+
+# ── debug ────────────────────────────────────────────────────────────────────
+
+[routes.debug.low]
+models = [
+  "claude-sonnet-5",
+  "grok-4.5",
+  "gpt-5.6-terra",
+  "opencode-qwen3.7-plus",
+]
+effort = "high"
+
+[routes.debug.medium]
+models = [
+  "claude-sonnet-5",
+  "grok-4.5",
+  "gpt-5.6-sol",
+  "opencode-minimax-m3",
+]
+effort = "high"
+
+[routes.debug.high]
+models = [
+  "claude-opus-5",
+  "grok-4.5",
+  "gpt-5.6-sol",
+]
+effort = "xhigh"
+
+# ── implement ────────────────────────────────────────────────────────────────
+
+[routes.implement.low]
+models = [
+  "claude-sonnet-5",
+  "grok-4.5",
+  "gpt-5.6-terra",
+  "opencode-qwen3.7-plus",
+  "opencode-glm-5.2",
+  "claude-haiku-4-5-20251001",
+]
+effort = "medium"
+
+[routes.implement.medium]
+models = [
+  "claude-sonnet-5",
+  "grok-4.5",
+  "gpt-5.6-sol",
+  "claude-opus-5",
+  "opencode-minimax-m3",
+]
+effort = "high"
+
+[routes.implement.high]
+models = [
+  "claude-opus-5",
+  "grok-4.5",
+  "gpt-5.6-sol",
+  "opencode-qwen3.7-max",
+]
+effort = "xhigh"
+
+# ── design (child is general-purpose; plan agent type stays on parent) ───────
+
+[routes.design.low]
+models = [
+  "claude-opus-5",
+  "grok-4.5",
+  "gpt-5.6-sol",
+]
+effort = "high"
+
+[routes.design.medium]
+models = [
+  "claude-opus-5",
+  "grok-4.5",
+  "gpt-5.6-sol",
+]
+effort = "xhigh"
+
+[routes.design.high]
+models = [
+  "claude-opus-5",
+  "gpt-5.6-sol",
+]
+effort = "xhigh"
+
+# ── review ───────────────────────────────────────────────────────────────────
+
+[routes.review.low]
+models = [
+  "claude-sonnet-5",
+  "grok-4.5",
+  "gpt-5.6-terra",
+  "opencode-qwen3.7-plus",
+  "claude-haiku-4-5-20251001",
+]
+effort = "high"
+
+[routes.review.medium]
+models = [
+  "claude-sonnet-5",
+  "grok-4.5",
+  "gpt-5.6-sol",
+  "claude-opus-5",
+  "opencode-qwen3.7-max",
+  "gemini-3.1-pro-preview",
+]
+effort = "xhigh"
+
+[routes.review.high]
+models = [
+  "claude-opus-5",
+  "grok-4.5",
+  "gpt-5.6-sol",
+  "claude-sonnet-5",
+  "opencode-qwen3.7-max",
+]
+effort = "xhigh"

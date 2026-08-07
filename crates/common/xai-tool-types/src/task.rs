@@ -20,10 +20,42 @@ pub struct TaskToolInput {
     #[schemars(description = "Short description of the task (3-5 words).")]
     pub description: String,
 
-    /// Name of the subagent type to launch. Built-in types: "general-purpose",
-    /// "explore", "plan". Additional user-defined types may also be available.
+    /// Cognitive task kind for the subagent router: "scout", "debug", "implement",
+    /// "design", or "review". When set (with complexity), the router picks model,
+    /// effort, and tool ceiling; do not pick a routine model yourself.
     #[schemars(
-        description = "Name of the subagent type to launch. Built-in types: \"general-purpose\", \"explore\", \"plan\". Additional user-defined types may also be available."
+        description = "Task kind for routing: \"scout\", \"debug\", \"implement\", \"design\", or \"review\". \
+            With complexity, the router selects model, reasoning effort, and tools. Prefer this over \
+            choosing model/subagent_type yourself."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+
+    /// Difficulty for the router: "low", "medium", or "high".
+    #[schemars(
+        description = "Task difficulty for routing: \"low\", \"medium\", or \"high\". Used with task_type \
+            to pick model ceiling and reasoning effort."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complexity: Option<String>,
+
+    /// When true, only vision-capable models are eligible (NV / no-vision models are dropped).
+    #[schemars(
+        description = "Set true if the child must understand images/screenshots. Filters out no-vision (NV) models."
+    )]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_lenient::deserialize_lenient_bool"
+    )]
+    pub requires_vision: bool,
+
+    /// Name of the subagent type to launch. Built-in types: "general-purpose",
+    /// "explore", "plan". Prefer task_type routing; the router derives the type
+    /// (scout→explore, else general-purpose) when task_type is set.
+    #[schemars(
+        description = "Optional legacy agent type: \"general-purpose\", \"explore\", \"plan\". \
+            Prefer task_type+complexity. When task_type is set, the router overrides this \
+            (scout→explore; other types→general-purpose). Plan stays on the parent agent."
     )]
     #[serde(default = "default_subagent_type")]
     pub subagent_type: String,
@@ -93,12 +125,15 @@ pub struct TaskToolInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
 
-    /// Optional model slug for this subagent.
+    /// Error-path model override only. For normal spawns leave unset so the
+    /// router picks from task_type×complexity + quota. Use only when a prior
+    /// subagent for this work failed or returned unusable results; a macOS
+    /// notification is emitted when this is set.
     #[schemars(
-        description = "Optional model slug for this agent. If provided, it must resolve to one \
-            of the available model slugs. If omitted, the subagent uses the same model as the \
-            parent agent. Do not pass if resume_from is set (prior model will be used). Only \
-            choose an explicit model when the user directly requests it."
+        description = "Error-path ONLY model override. Leave unset for normal routing \
+            (task_type+complexity select the model). Set only when a previous child for this \
+            work failed/was unusable; must be a valid model slug. Do not pass with resume_from. \
+            Using this override triggers a macOS notification."
     )]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -1203,6 +1238,9 @@ mod tests {
         let input = TaskToolInput {
             prompt: "p".into(),
             description: "d".into(),
+            task_type: None,
+            complexity: None,
+            requires_vision: false,
             subagent_type: default_subagent_type(),
             run_in_background: false,
             capability_mode: None,
