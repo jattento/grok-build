@@ -149,6 +149,7 @@ pub fn get_syntect() -> &'static Syntect {
         | ThemeKind::RosePineMoon
         | ThemeKind::OscuraMidnight
         | ThemeKind::ItermGreen
+        | ThemeKind::CodexDark
         | ThemeKind::Auto => SYNTECT_GROKNIGHT
             .get_or_init(|| Syntect::new(include_bytes!("../assets/grok-night.tmTheme"))),
         ThemeKind::TokyoNight => SYNTECT_TOKYONIGHT
