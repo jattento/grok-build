@@ -149,23 +149,56 @@ Template for new entries:
 - Retire when: upstream accepts user-defined themes from config, which would
   turn this into a `~/.grok` file and drop the delta to zero.
 
+### `crates/codegen/xai-grok-pager-render/src/theme/codexdark.rs`
+
+- What: a new file holding the `codex-dark` theme, ported verbatim from
+  Conan Code's own embedded Ghostty theme
+  (`Coinor/Resources/GhosttyOverrides.conf` in the `jattento/coinor` repo):
+  background `#181818`, accent `#339CFF`, warm-cream foreground `#FAF3DD`,
+  and its ANSI-16 diff/status ramp.
+- Why here: same as `theme/iterm.rs` above.
+- Retire when: same as above.
+
 ### `crates/codegen/xai-grok-pager-render/src/theme/mod.rs`
 
-- What: registers that theme — a `ThemeKind::ItermGreen = 6` variant plus its
-  `mod iterm;`, display name, parse aliases, quantization flag, and the two
-  dispatch arms that map the kind to `Theme::iterm_green()`.
+- What: registers both fork themes — `ThemeKind::ItermGreen = 6` and
+  `ThemeKind::CodexDark = 7` — each with its `mod` declaration, display
+  name, parse aliases, quantization flag, and the two dispatch arms mapping
+  the kind to its `Theme::iterm_green()` / `Theme::codex_dark()`.
 - Why here: `ThemeKind` is a closed enum with exhaustive matches, so a new
   theme cannot be added from outside the crate.
-- Retire when: same as above.
+- Retire when: same as `theme/iterm.rs` above.
 
 ### `crates/codegen/xai-grok-pager-render/src/theme/cache.rs`
 
-- What: one line adding the new kind to the cached theme table.
+- What: one line per theme adding the new kind to the cached theme table.
 - Why here: the cache enumerates every `ThemeKind`.
 - Retire when: same as above.
 
 ### `crates/codegen/xai-grok-pager-render/src/syntax.rs`
 
-- What: one line adding the new kind to the syntax-highlighting match.
+- What: one line per theme adding the new kind to the syntax-highlighting
+  match (both route to the GrokNight syntect theme — dark/neutral enough to
+  share it).
 - Why here: the match over `ThemeKind` is exhaustive.
 - Retire when: same as above.
+
+### `crates/codegen/xai-grok-pager/src/settings/defs.rs`
+
+- What: adds `iterm-green` and `codex-dark` entries to `THEME_CHOICES` and
+  `CONCRETE_THEME_CHOICES` so both themes are selectable from the Settings
+  modal, not just `/theme` or the config file — the iterm-green commit added
+  the theme but missed this catalog.
+- Why here: these are hand-written catalogs, not derived from
+  `ThemeKind::available()`.
+- Retire when: same as `theme/iterm.rs` above.
+
+### `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs`
+
+- What: adds `ItermGreen` and `CodexDark` arms (routed through
+  `Theme::current()`, like the existing `OscuraMidnight` arm) to an
+  exhaustive match that did not compile without them — the iterm-green
+  commit left this one broken.
+- Why here: `theme::iterm` and `theme::codexdark` are private modules, so
+  this test cannot call their constructors directly.
+- Retire when: same as `theme/iterm.rs` above.

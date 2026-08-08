@@ -23,6 +23,7 @@ mod rosepine;
 pub mod system_appearance;
 mod terminal_default;
 pub mod tokyonight;
+mod codexdark;
 
 pub use color_support::quantize;
 pub use tokyonight::{Theme, pulse_brightness, wave_brightness};
@@ -36,6 +37,7 @@ pub enum ThemeKind {
     RosePineMoon = 3,
     OscuraMidnight = 5,
     ItermGreen = 6,
+    CodexDark = 7,
     /// Meta-variant: follow system dark/light appearance.
     ///
     /// Never stored in `cache::CURRENT` — resolved to a concrete
@@ -55,6 +57,7 @@ impl ThemeKind {
         ThemeKind::RosePineMoon,
         ThemeKind::OscuraMidnight,
         ThemeKind::ItermGreen,
+        ThemeKind::CodexDark,
     ];
 
     /// Theme kinds available on the current terminal.
@@ -83,6 +86,7 @@ impl ThemeKind {
             Self::RosePineMoon => "rosepine-moon",
             Self::OscuraMidnight => "oscura-midnight",
             Self::ItermGreen => "iterm-green",
+            Self::CodexDark => "codex-dark",
             Self::Auto => "auto",
         }
     }
@@ -102,6 +106,9 @@ impl ThemeKind {
             // Violet elevations and the green ramp both collapse to flat
             // ANSI green once quantized, erasing the depth cues.
             Self::ItermGreen => true,
+            // Warm-neutral canvas + a single accent quantize cleanly to
+            // 256-color, but keep truecolor for the exact Ghostty match.
+            Self::CodexDark => true,
             // Auto is resolved to a concrete theme before rendering.
             Self::Auto => false,
         }
@@ -121,6 +128,9 @@ impl ThemeKind {
             }
             "oscura" | "oscura-midnight" => Some(Self::OscuraMidnight),
             "iterm" | "iterm2" | "iterm-green" | "itermgreen" => Some(Self::ItermGreen),
+            "codex-dark" | "codexdark" | "codex" | "conancode" | "conan-code" => {
+                Some(Self::CodexDark)
+            }
             _ => None,
         }
     }
@@ -157,6 +167,7 @@ pub fn display_name_for_canonical(value: &str) -> &str {
         "tokyonight" => "Tokyo Night",
         "rosepine-moon" => "Rose Pine Moon",
         "iterm-green" => "iTerm Green",
+        "codex-dark" => "Codex Dark",
         other => other,
     }
 }
@@ -284,6 +295,7 @@ impl Theme {
             ThemeKind::RosePineMoon => Self::rosepine_moon(),
             ThemeKind::OscuraMidnight => Self::oscura_midnight(),
             ThemeKind::ItermGreen => Self::iterm_green(),
+            ThemeKind::CodexDark => Self::codex_dark(),
             // Auto is resolved to a concrete theme before being stored;
             // if reached, fall back to GrokNight.
             ThemeKind::Auto => Self::groknight(),
@@ -1074,6 +1086,7 @@ mod tests {
                 ThemeKind::RosePineMoon => Theme::rosepine_moon(),
                 ThemeKind::OscuraMidnight => Theme::oscura_midnight(),
                 ThemeKind::ItermGreen => Theme::iterm_green(),
+                ThemeKind::CodexDark => Theme::codex_dark(),
                 ThemeKind::Auto => unreachable!("ALL excludes Auto"),
             };
             let track = lum(theme.scrollbar_bg, "scrollbar_bg", kind);

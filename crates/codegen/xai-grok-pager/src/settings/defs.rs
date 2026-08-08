@@ -71,6 +71,16 @@ const THEME_CHOICES: &[EnumChoice] = &[
         display: "Oscura Midnight",
         description: "Deep dark with warm accents; needs truecolor.",
     },
+    EnumChoice {
+        canonical: "iterm-green",
+        display: "iTerm Green",
+        description: "Green on violet, ported from an iTerm2 profile; needs truecolor.",
+    },
+    EnumChoice {
+        canonical: "codex-dark",
+        display: "Codex Dark",
+        description: "Conan Code's own Ghostty theme: warm cream on near-black; needs truecolor.",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -517,6 +527,16 @@ const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
         canonical: "oscura-midnight",
         display: "Oscura Midnight",
         description: "Deep dark with warm accents; needs truecolor.",
+    },
+    EnumChoice {
+        canonical: "iterm-green",
+        display: "iTerm Green",
+        description: "Green on violet, ported from an iTerm2 profile; needs truecolor.",
+    },
+    EnumChoice {
+        canonical: "codex-dark",
+        display: "Codex Dark",
+        description: "Conan Code's own Ghostty theme: warm cream on near-black; needs truecolor.",
     },
 ];
 
