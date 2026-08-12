@@ -90,7 +90,7 @@ fn osascript_script(title: &str, body: &str) -> String {
 
 fn notify_osascript(title: &str, body: &str) -> io::Result<()> {
     let script = osascript_script(title, body);
-    // Prefer absolute path — PATH can be sparse under Herdr/leader.
+    // Prefer absolute path — PATH can be sparse under the leader process.
     let bin = if std::path::Path::new("/usr/bin/osascript").exists() {
         "/usr/bin/osascript"
     } else {
