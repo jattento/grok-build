@@ -15,16 +15,30 @@ Facts that shape every rule below:
   where *we* also changed a file. Our merge cost is therefore proportional to
   our delta, not to the size of the upstream change.
 - `SOURCE_REV` records the monorepo commit the tree came from.
-- `~/bin/grok` is a symlink to `overlay/scripts/grk`, kept first on `PATH`
-  so every `grok` invocation on this machine resolves to this fork instead
-  of the official binary. [Conan Code](https://github.com/jattento/coinor)
-  is the IDE that hosts it: it spawns `~/bin/grok` directly inside its own
-  terminal tabs and owns the pane/window chrome itself, so `grok` here is a
-  harness with no terminal-multiplexer layer between it and the IDE.
-  Recreate the symlink after cloning:
+- `~/bin/grok` is a symlink to the **installed release**, never to this
+  checkout:
 
   ```sh
-  ln -sfn "$PWD/overlay/scripts/grk" ~/bin/grok
+  ~/bin/grok -> ~/.local/share/grok-overlay/bin/grok
+  ```
+
+  It is kept first on `PATH` so every `grok` invocation on this machine
+  resolves to the fork instead of the official binary.
+  [Conan Code](https://github.com/jattento/coinor) is the IDE that hosts it:
+  it spawns `~/bin/grok` directly inside its own terminal tabs and owns the
+  pane/window chrome itself, so `grok` here is a harness with no
+  terminal-multiplexer layer between it and the IDE.
+
+  Never point `grok` at `target/`, at `overlay/scripts/grk`, or at a git
+  worktree. Worktrees are transitory and get deleted; a build tree drifts from
+  what every other machine runs and reports an unstamped version. Install a
+  published release instead — see "Releasing" below.
+
+- `grk` is the separate *development* launcher for running an uninstalled local
+  build. It is a symlink to this checkout, and it never shadows `grok`:
+
+  ```sh
+  ln -sfn "$PWD/overlay/scripts/grk" ~/bin/grk
   ```
 
 **The golden rule: keep our delta as small and as boring as possible.**
