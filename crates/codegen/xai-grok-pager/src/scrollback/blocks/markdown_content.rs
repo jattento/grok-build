@@ -7,12 +7,14 @@
 //! [`ThinkingBlock`](super::ThinkingBlock).
 
 use std::cell::RefCell;
+use std::ops::Range;
 
 use ratatui::text::Line;
 
 use crate::render::wrapping::word_wrap_lines_with_joiners;
 use crate::scrollback::types::{BlockLine, BlockOutput};
 
+use super::mermaid_content::{AffordanceSubject, CopyBlock};
 use super::quote_bar::QuoteBarStrip;
 
 pub(crate) const MARKDOWN_BODY_RANGE: u16 = 0;
@@ -234,9 +236,88 @@ impl MarkdownContent {
     /// Allocation-light (no source rebuild) for the per-frame caption path; the
     /// detection skeleton with the diagram source lives in
     /// [`mermaid_content`](Self::mermaid_content).
-    pub fn mermaid_block_ranges(&self) -> Vec<std::ops::Range<usize>> {
+    pub fn mermaid_block_ranges(&self) -> Vec<Range<usize>> {
         let state = self.state.borrow();
         super::mermaid_content::mermaid_block_ranges(&state.renderer.view())
+    }
+
+    /// Every copyable markdown block in this message, in document order:
+    /// its pre-wrap rendered line range, what kind of block it is, and the
+    /// source text a `[Copy]` press should put on the clipboard.
+    pub fn copy_blocks(&self) -> Vec<CopyBlock> {
+        let state = self.state.borrow();
+        let view = state.renderer.view();
+        let mut blocks = Vec::with_capacity(view.code_blocks.len() + view.tables.len());
+
+        blocks.extend(
+            view.code_blocks
+                .iter()
+                .filter(|span| !span.output_line_range.is_empty())
+                .map(|span| {
+                    let subject = if super::mermaid_content::is_mermaid_info(&span.info) {
+                        AffordanceSubject::Mermaid
+                    } else {
+                        let label = span
+                            .info
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("code")
+                            .to_lowercase();
+                        AffordanceSubject::Code(label)
+                    };
+                    CopyBlock {
+                        prewrap_range: span.output_line_range.clone(),
+                        subject,
+                        source: span.body.clone(),
+                    }
+                }),
+        );
+        blocks.extend(
+            view.tables
+                .iter()
+                .filter(|span| !span.output_line_range.is_empty())
+                .map(|span| CopyBlock {
+                    prewrap_range: span.output_line_range.clone(),
+                    subject: AffordanceSubject::Table,
+                    source: span.source.clone(),
+                }),
+        );
+
+        // `sort_by_key` is stable: although code blocks and tables never
+        // overlap, preserving renderer order for equal anchors keeps the
+        // positional contract with `apply_affordance_rows` explicit.
+        blocks.sort_by_key(|block| block.prewrap_range.start);
+        blocks
+    }
+
+    /// How many affordance rows [`copy_blocks`](Self::copy_blocks) would
+    /// produce: the total, and the Mermaid subset of it.
+    ///
+    /// Mirrors `copy_blocks`' filtering exactly but allocates nothing and
+    /// clones no source, for the off-screen height estimate — which runs for
+    /// every entry on every layout pass, not just the visible ones.
+    pub fn copy_block_counts(&self) -> (usize, usize) {
+        let state = self.state.borrow();
+        let view = state.renderer.view();
+        let mermaid = view
+            .code_blocks
+            .iter()
+            .filter(|span| {
+                !span.output_line_range.is_empty()
+                    && super::mermaid_content::is_mermaid_info(&span.info)
+            })
+            .count();
+        let code = view
+            .code_blocks
+            .iter()
+            .filter(|span| !span.output_line_range.is_empty())
+            .count();
+        let tables = view
+            .tables
+            .iter()
+            .filter(|span| !span.output_line_range.is_empty())
+            .count();
+        (code + tables, mermaid)
     }
 
     /// Build the Mermaid detection skeleton from the current rendered output.

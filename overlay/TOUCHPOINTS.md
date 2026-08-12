@@ -193,7 +193,14 @@ Template for new entries:
   `ThemeKind::available()`.
 - Retire when: same as `theme/iterm.rs` above.
 
-### `crates/codegen/xai-grok-markdown/src/{output,render,streaming,buffers,parse,lib}.rs`
+### `crates/codegen/xai-grok-markdown` — table spans
+
+Covers `crates/codegen/xai-grok-markdown/src/output.rs`,
+`crates/codegen/xai-grok-markdown/src/render.rs`,
+`crates/codegen/xai-grok-markdown/src/streaming.rs`,
+`crates/codegen/xai-grok-markdown/src/buffers.rs`,
+`crates/codegen/xai-grok-markdown/src/parse.rs` and
+`crates/codegen/xai-grok-markdown/src/lib.rs`.
 
 - What: adds a public `TableSpan { source, output_line_range, source_byte_range }`
   and a `tables` field on `MarkdownRenderOutput` / `MarkdownRenderView`, mirroring
@@ -228,7 +235,10 @@ Template for new entries:
   and inflate the rebase surface for zero behavioural gain.
 - Retire when: upstream adds copy affordances for code blocks and tables.
 
-### `crates/codegen/xai-grok-pager/src/scrollback/blocks/{markdown_content,agent}.rs`
+### `crates/codegen/xai-grok-pager` — copy-affordance producers
+
+Covers `crates/codegen/xai-grok-pager/src/scrollback/blocks/markdown_content.rs`
+and `crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs`.
 
 - What: `MarkdownContent::copy_blocks()` merges the view's code-block and table
   spans into one document-ordered list, `copy_block_counts()` counts them without
@@ -240,15 +250,23 @@ Template for new entries:
   from one layout pass, which only this code performs.
 - Retire when: same as the entry above.
 
-### `crates/codegen/xai-grok-pager/src/{scrollback/render.rs,app/agent_view/media.rs,app/agent_view/paste.rs}`
+### `crates/codegen/xai-grok-pager` — copy-affordance painting and clicks
+
+Covers `crates/codegen/xai-grok-pager/src/scrollback/render.rs`,
+`crates/codegen/xai-grok-pager/src/app/agent_view/media.rs`,
+`crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs` and
+`crates/codegen/xai-grok-pager/src/views/file_search/line_viewer.rs`.
 
 - What: threads `AffordanceSubject` through `DiagramAffordancePlacement` into the
   painter, which now asks the row for its label/buttons per subject, skips the
   Mermaid render-state hash for code/table rows, and routes
   `AffordanceKind::Copy` to `copy_to_clipboard`. `paste.rs` is test-only fallout
   from the changed signatures.
+  The line viewer is upstream's second producer of placements; it only ever
+  emits Mermaid rows, so it names that subject explicitly.
 - Why here: the placement struct and the painter are the only path from a
-  rendered row to a click hit-rect.
+  rendered row to a click hit-rect, and every producer of the struct has to
+  supply the new field.
 - Retire when: same as the entries above.
 
 ### `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs`
