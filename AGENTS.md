@@ -46,6 +46,44 @@ Never force-push without a `pre-sync/*` tag pointing at the old `main`.
 Keep the stack rebase-friendly: one focused commit per customization, message
 prefixed `overlay:`, and no commits that mix upstream fixups with our features.
 
+### Always start new work from the latest `origin/main`
+
+Never start a feature on whatever branch happens to be checked out. This repo
+accumulates worktrees and stale feature branches, and because we *rebase* onto
+upstream snapshots, an old branch can carry commits that look identical to
+`main`'s but have different SHAs — so it reads as "ahead" while actually
+missing everything landed since it was cut.
+
+Before writing a single line:
+
+```sh
+git fetch origin
+git log --oneline HEAD..origin/main     # must print nothing
+git worktree list                       # who already owns `main`?
+```
+
+If the middle command prints anything, you are behind. Do not build on it:
+
+```sh
+git switch -c <feature> origin/main
+```
+
+`main` is often checked out in another worktree, which makes `git switch main`
+fail here. That is not a reason to work on the stale branch: branch from
+`origin/main` as above, then land the work by cherry-picking onto `main` in the
+worktree that owns it.
+
+Two failures this prevents, both quiet and both already hit once:
+
+- A release cut from a stale branch ships a **downgrade**, dropping every
+  overlay commit the branch never had.
+- Editing a file that the stale branch has an older copy of (`AGENTS.md`,
+  `overlay/TOUCHPOINTS.md`, `Cargo.lock`) and cherry-picking it forward
+  **reverts** the newer content along with it.
+
+Same rule for the docs: check `git diff main <branch> -- <file>` before editing
+a shared file from a branch you did not just cut.
+
 ## Where custom code goes
 
 ```
