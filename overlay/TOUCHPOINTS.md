@@ -269,12 +269,26 @@ Covers `crates/codegen/xai-grok-pager/src/scrollback/render.rs`,
   supply the new field.
 - Retire when: same as the entries above.
 
+### `crates/codegen/xai-grok-pager/src/diagnostics/doctor_format_tests.rs`
+
+- What: derives the limited-color theme-count denominator from
+  `ThemeKind::ALL` instead of hardcoding upstream's five themes.
+- Why here: the fork's two extra themes legitimately change the denominator,
+  while the available limited-color themes remain unchanged.
+- Retire when: upstream makes this expectation dynamic.
+
+### `crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs`
+
+- What: derives human and JSON theme-count expectations from `ThemeKind::ALL`
+  instead of hardcoding upstream's five themes.
+- Why here: the fork's two extra themes legitimately change the denominator,
+  and these contract fixtures must follow the enum used by their inputs.
+- Retire when: upstream makes these expectations dynamic.
+
 ### `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs`
 
-- What: adds `ItermGreen` and `CodexDark` arms (routed through
-  `Theme::current()`, like the existing `OscuraMidnight` arm) to an
-  exhaustive match that did not compile without them — the iterm-green
-  commit left this one broken.
-- Why here: `theme::iterm` and `theme::codexdark` are private modules, so
-  this test cannot call their constructors directly.
+- What: adds `ItermGreen` and `CodexDark` arms to an exhaustive match and uses
+  their raw public `Theme` constructors for the palette contrast assertion.
+- Why here: the fork variants require match arms, and `Theme::current()` is
+  quantized so limited-color terminals can collapse the compared colors.
 - Retire when: same as `theme/iterm.rs` above.
