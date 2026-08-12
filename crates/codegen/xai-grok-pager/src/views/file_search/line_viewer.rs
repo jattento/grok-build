@@ -24,7 +24,9 @@ use syntect::easy::HighlightLines;
 use crate::render::scrollbar::SCROLLBAR_TOTAL_COLS;
 use crate::render::wrapping::word_wrap_line;
 use crate::scrollback::blocks::markdown_content::MarkdownContent;
-use crate::scrollback::blocks::mermaid_content::{MermaidDisplay, mermaid_display};
+use crate::scrollback::blocks::mermaid_content::{
+    AffordanceSubject, MermaidDisplay, mermaid_display,
+};
 use crate::scrollback::render::DiagramAffordancePlacement;
 use crate::syntax::get_syntect;
 use crate::theme::Theme;
@@ -966,6 +968,7 @@ impl LineViewerState {
                     height: 1,
                 },
                 source: m.source.clone(),
+                subject: AffordanceSubject::Mermaid,
             });
         }
         placements

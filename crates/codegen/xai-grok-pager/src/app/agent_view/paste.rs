@@ -1605,14 +1605,16 @@ pub(super) mod paste_key_tests {
     /// source), with the buttons shifted right past the label.
     #[test]
     fn paints_affordance_row_with_label_and_registers_all_buttons() {
-        use crate::scrollback::blocks::mermaid_content::{AffordanceKind, affordance_row};
+        use crate::scrollback::blocks::mermaid_content::{
+            AffordanceKind, AffordanceSubject, affordance_row,
+        };
         use crate::scrollback::render::DiagramAffordancePlacement;
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
         let theme = Theme::current();
         let source = "flowchart TD\nA-->B\n".to_string();
-        let layout = affordance_row(false);
-        let cols = layout.buttons.map(|b| b.col);
+        let layout = affordance_row(&AffordanceSubject::Mermaid, false);
+        let cols = layout.buttons.iter().map(|b| b.col).collect::<Vec<_>>();
         let mut agent = make_agent();
         let rect = Rect::new(0, 0, 80, 1);
         let mut buf = Buffer::empty(rect);
@@ -1621,6 +1623,7 @@ pub(super) mod paste_key_tests {
             vec![DiagramAffordancePlacement {
                 screen_rect: rect,
                 source: source.clone(),
+                subject: AffordanceSubject::Mermaid,
             }],
             &theme,
         );
@@ -1660,16 +1663,21 @@ pub(super) mod paste_key_tests {
     /// off the row, all buttons are idle.
     #[test]
     fn paints_affordance_row_highlights_only_the_hovered_button() {
-        use crate::scrollback::blocks::mermaid_content::affordance_row;
+        use crate::scrollback::blocks::mermaid_content::{AffordanceSubject, affordance_row};
         use crate::scrollback::render::DiagramAffordancePlacement;
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
         use ratatui::style::Modifier;
         let theme = Theme::current();
-        let cols = affordance_row(false).buttons.map(|b| b.col);
+        let cols = affordance_row(&AffordanceSubject::Mermaid, false)
+            .buttons
+            .iter()
+            .map(|b| b.col)
+            .collect::<Vec<_>>();
         let placement = |rect: Rect| DiagramAffordancePlacement {
             screen_rect: rect,
             source: "A-->B\n".to_string(),
+            subject: AffordanceSubject::Mermaid,
         };
         let rect = Rect::new(0, 0, 80, 1);
         let modifier = |buf: &Buffer, x: u16| buf.cell((x, 0)).unwrap().modifier;
@@ -1715,6 +1723,7 @@ pub(super) mod paste_key_tests {
     /// only `[Open]`'s hit-rect; the clipped buttons register none.
     #[test]
     fn paints_affordance_row_clips_segments_to_row_width() {
+        use crate::scrollback::blocks::mermaid_content::AffordanceSubject;
         use crate::scrollback::render::DiagramAffordancePlacement;
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
@@ -1727,6 +1736,7 @@ pub(super) mod paste_key_tests {
             vec![DiagramAffordancePlacement {
                 screen_rect: rect,
                 source: "A-->B\n".to_string(),
+                subject: AffordanceSubject::Mermaid,
             }],
             &theme,
         );
