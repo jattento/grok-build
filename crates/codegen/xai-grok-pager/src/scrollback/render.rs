@@ -7,6 +7,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 use super::block::{BlockContent, RenderBlock};
+use super::blocks::mermaid_content;
 use super::entry::ScrollbackEntry;
 use super::layout::HorizontalLayout;
 use super::state::EntryLayoutInfo;
@@ -143,18 +144,19 @@ pub struct InlineMediaPlacement {
     pub has_button_row: bool,
 }
 
-/// A visible Mermaid diagram affordance row with its screen position and the
-/// diagram source its buttons act on. The draw loop paints
-/// `◇ mermaid [Open Image] [Copy Image Path] [Copy Source]` onto `screen_rect` and registers
-/// the click hit-rects; the reserved (blank) row already scrolls with the
-/// surrounding content. Rendering is lazy (driven from the source on click), so
+/// A visible copyable-markdown affordance row with its screen position, source,
+/// and subject-specific label/buttons. The draw loop paints onto `screen_rect`
+/// and registers click hit-rects; the reserved blank row already scrolls with
+/// the surrounding content. Mermaid rendering remains lazy and source-led, so
 /// no rendered path/state is carried here.
 #[derive(Debug, Clone)]
 pub struct DiagramAffordancePlacement {
     /// Screen rect of the affordance row (one row tall, content-area width).
     pub screen_rect: ratatui::layout::Rect,
-    /// Diagram source (the fence body); the data every button acts on.
+    /// Source text the row's copy/render actions operate on.
     pub source: String,
+    /// Block kind, which determines the row's label and available buttons.
+    pub subject: mermaid_content::AffordanceSubject,
 }
 
 /// Result of rendering entries.
@@ -176,7 +178,7 @@ pub struct ScrollRenderResult {
     pub link_overlay: LinkOverlay,
     /// Inline media to render via post-flush escape sequences.
     pub inline_media: Vec<InlineMediaPlacement>,
-    /// Diagram affordance rows to paint + register click hit-rects for.
+    /// Copyable-markdown affordance rows to paint + register click hit-rects for.
     pub diagram_affordances: Vec<DiagramAffordancePlacement>,
 }
 
@@ -779,9 +781,9 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
             }
         }
 
-        // Diagram affordance rows: map each block-relative reserved row to a
-        // screen rect when visible. The blank row already scrolls with the
-        // content; the draw loop paints the buttons + registers click hit-rects.
+        // Copyable-markdown affordance rows: map each block-relative reserved
+        // row to a screen rect when visible. The blank row already scrolls with
+        // the content; the draw loop paints buttons + registers click hit-rects.
         // Agent messages (the only producer) have no top vpad, so `row_offset`
         // is measured straight from `y_start`, like inline media above.
         // Header gate unreachable today (producers are agent messages — run
@@ -803,6 +805,7 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
                         height: 1,
                     },
                     source: aff.source,
+                    subject: aff.subject,
                 });
             }
         }

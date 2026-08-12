@@ -1,16 +1,16 @@
-//! Mermaid diagram detection and the on-screen affordance row.
+//! Mermaid diagram detection and copyable-markdown affordance rows.
 //!
-//! The markdown renderer draws ` ```mermaid ` blocks inline as Unicode
-//! box-drawing art. This module detects those blocks in an agent message (via
-//! the generic [`CodeBlockSpan`](xai_grok_markdown::CodeBlockSpan) API) and
-//! exposes each diagram's clean source so a full-fidelity PNG can be rendered on
-//! demand. It never renders and tracks no per-diagram render state (rendering is
-//! lazy, driven by the affordance row on click). For `auto`/`on` a clickable
-//! affordance row (`◇ mermaid [Open Image] [Copy Image Path] [Copy Source]`) is
-//! placed beneath the inline art; for `off` only the inline art is shown. The
-//! rendered PNG is never drawn inline — it is reached only through the affordance
-//! row's actions.
+//! The markdown renderer exposes fenced-code and table spans with their clean
+//! source plus pre-wrap rendered ranges. This module turns those spans into the
+//! shared affordance-row model painted beneath every copyable block, while
+//! keeping the existing Mermaid detection/render skeleton in the same file to
+//! avoid a fork-only rename touchpoint. Mermaid rows retain their render-on-click
+//! actions (`◇ mermaid [Open Image] [Copy Image Path] [Copy Source]`); ordinary
+//! fences and GFM tables get a source-only `[Copy]` action. The rows reserve no
+//! selectable text themselves: the draw loop paints them into blank continuation
+//! lines inserted beneath the rendered block.
 
+use std::borrow::Cow;
 use std::ops::Range;
 
 use ratatui::text::Line;
@@ -38,6 +38,8 @@ const AFFORDANCE_OPEN: &str = "[Open Image]";
 const AFFORDANCE_COPY_PATH: &str = "[Copy Image Path]";
 /// Affordance-row button label: copy the diagram's Mermaid source.
 const AFFORDANCE_COPY_SOURCE: &str = "[Copy Source]";
+/// Affordance-row button label: copy a code block or table's source.
+const AFFORDANCE_COPY: &str = "[Copy]";
 
 /// Display-column gap between adjacent affordance-row buttons (and before the
 /// trailing status hint).
@@ -101,7 +103,7 @@ pub struct MermaidBlock {
 /// whitespace-delimited token equals `mermaid` (case-insensitive), so
 /// ` ```mermaid `, ` ```Mermaid `, and ` ```mermaid theme=base ` all match
 /// while a code block in another language does not.
-fn is_mermaid_info(info: &str) -> bool {
+pub(crate) fn is_mermaid_info(info: &str) -> bool {
     info.split_whitespace()
         .next()
         .is_some_and(|token| token.eq_ignore_ascii_case(MERMAID_INFO))
@@ -300,6 +302,18 @@ pub fn mermaid_display_static(setting: RenderMermaid, static_commit: bool) -> Me
     }
 }
 
+/// What an affordance row is attached to — decides its label and its buttons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AffordanceSubject {
+    /// A ` ```mermaid ` fence: render-on-click plus copy-source.
+    Mermaid,
+    /// Any other closed fence. Carries its display label (the info string's
+    /// first token, or `code` when the fence has none).
+    Code(String),
+    /// A GFM table.
+    Table,
+}
+
 /// Which click action an affordance-row button triggers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AffordanceKind {
@@ -310,11 +324,13 @@ pub(crate) enum AffordanceKind {
     CopyPath,
     /// Copy the diagram's Mermaid source (no render needed).
     CopySource,
+    /// Copy the block's source (no render needed).
+    Copy,
 }
 
-/// One button in a diagram's affordance row, with its start column so the
-/// painted label and the click hit-rect can't drift. Every button is always
-/// clickable — `[Open]`/`[Copy path]` render lazily on click.
+/// One button in a copyable block's affordance row, with its start column so
+/// the painted label and the click hit-rect can't drift. Every button is always
+/// clickable — Mermaid's `[Open]`/`[Copy path]` actions render lazily on click.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AffordanceButton {
     /// Display label, e.g. `[Open]`.
@@ -325,69 +341,98 @@ pub(crate) struct AffordanceButton {
     pub col: u16,
 }
 
-/// The full affordance-row layout: the leading `◇ mermaid` label, the three
-/// buttons (with columns), and the trailing status hint (with column), so the
-/// painter and the click hit-rects draw from one source of truth and can't
-/// drift.
+/// The full affordance-row layout: its leading subject label, buttons (with
+/// columns), and optional trailing status hint, so the painter and the click
+/// hit-rects draw from one source of truth and can't drift.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AffordanceRow {
-    /// `(start_col, text)` of the leading dim, non-clickable `◇ mermaid` label.
-    pub label: (u16, &'static str),
-    /// `[Open Image] [Copy Image Path] [Copy Source]`, left-to-right with their
-    /// columns (shifted right past the leading label).
-    pub buttons: [AffordanceButton; 3],
+    /// `(start_col, text)` of the leading dim, non-clickable subject label.
+    pub label: (u16, Cow<'static, str>),
+    /// Buttons left-to-right with their columns shifted past the leading label.
+    pub buttons: Vec<AffordanceButton>,
     /// `(start_col, text)` of the trailing `rendering…` hint, present only while
-    /// an on-click render for this diagram is in flight.
+    /// an on-click Mermaid render is in flight.
     pub status: Option<(u16, &'static str)>,
 }
 
-/// The affordance row's three buttons laid out left-to-right starting at
-/// `start_col` (which leaves room for the leading `◇ mermaid` label).
-fn affordance_buttons(start_col: u16) -> [AffordanceButton; 3] {
-    let specs = [
-        (AFFORDANCE_OPEN, AffordanceKind::Open),
-        (AFFORDANCE_COPY_PATH, AffordanceKind::CopyPath),
-        (AFFORDANCE_COPY_SOURCE, AffordanceKind::CopySource),
-    ];
+/// Lay out `specs` left-to-right starting at `start_col`, preserving the same
+/// fixed gap the painter also relies on between the label and first button.
+fn affordance_buttons(
+    start_col: u16,
+    specs: &[(&'static str, AffordanceKind)],
+) -> Vec<AffordanceButton> {
     let mut col = start_col;
-    specs.map(|(label, kind)| {
-        let button = AffordanceButton { label, kind, col };
-        col += UnicodeWidthStr::width(label) as u16 + AFFORDANCE_GAP;
-        button
-    })
+    specs
+        .iter()
+        .map(|&(label, kind)| {
+            let button = AffordanceButton { label, kind, col };
+            col += UnicodeWidthStr::width(label) as u16 + AFFORDANCE_GAP;
+            button
+        })
+        .collect()
 }
 
-/// The whole affordance-row layout for a diagram: the leading `◇ mermaid` label,
-/// the three (always-clickable) buttons shifted past it, and the trailing
-/// `rendering…` hint when `rendering` is true. One source of truth shared by the
-/// painter and hit-testing, so the painted columns and click hit-rects align.
-pub(crate) fn affordance_row(rendering: bool) -> AffordanceRow {
-    let buttons_start = UnicodeWidthStr::width(MERMAID_LABEL) as u16 + AFFORDANCE_GAP;
-    let buttons = affordance_buttons(buttons_start);
-    let status = rendering.then(|| {
+/// The whole affordance-row layout for one copyable markdown block. Mermaid's
+/// label, three buttons, columns, and transient status remain identical to the
+/// original diagram-only path; code and table subjects reuse the same layout
+/// source with one `[Copy]` button. Keeping both painting and hit-testing here
+/// prevents dynamic code labels from shifting one path without the other.
+pub(crate) fn affordance_row(subject: &AffordanceSubject, rendering: bool) -> AffordanceRow {
+    let (label, specs): (Cow<'static, str>, &[(&'static str, AffordanceKind)]) = match subject {
+        AffordanceSubject::Mermaid => (
+            Cow::Borrowed(MERMAID_LABEL),
+            &[
+                (AFFORDANCE_OPEN, AffordanceKind::Open),
+                (AFFORDANCE_COPY_PATH, AffordanceKind::CopyPath),
+                (AFFORDANCE_COPY_SOURCE, AffordanceKind::CopySource),
+            ],
+        ),
+        AffordanceSubject::Code(lang) => (
+            Cow::Owned(format!("\u{25c7} {lang}")),
+            &[(AFFORDANCE_COPY, AffordanceKind::Copy)],
+        ),
+        AffordanceSubject::Table => (
+            Cow::Borrowed("\u{25c7} table"),
+            &[(AFFORDANCE_COPY, AffordanceKind::Copy)],
+        ),
+    };
+    let buttons_start = UnicodeWidthStr::width(label.as_ref()) as u16 + AFFORDANCE_GAP;
+    let buttons = affordance_buttons(buttons_start, specs);
+    let status = (matches!(subject, AffordanceSubject::Mermaid) && rendering).then(|| {
         let last = &buttons[buttons.len() - 1];
         let after = last.col + UnicodeWidthStr::width(last.label) as u16 + AFFORDANCE_GAP;
         (after, MERMAID_RENDERING)
     });
     AffordanceRow {
-        label: (0, MERMAID_LABEL),
+        label: (0, label),
         buttons,
         status,
     }
 }
 
-/// A diagram's clickable affordance row, anchored within a block's output.
-///
-/// Carries no raster — only the row position plus the diagram source the
-/// affordance buttons act on (rendering is lazy, driven from the source on
-/// click, so no rendered path is tracked here).
+/// A markdown block that gets a copy affordance row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyBlock {
+    /// Pre-wrap rendered line range, as indices into the view's lines.
+    pub prewrap_range: Range<usize>,
+    /// Label + button set for this block's row.
+    pub subject: AffordanceSubject,
+    /// Text a `[Copy]`/`[Copy Source]` press writes to the clipboard.
+    pub source: String,
+}
+
+/// A copyable markdown block's clickable affordance row, anchored within a
+/// block's output. Carries no raster — only the final row position, source, and
+/// subject the draw loop needs; Mermaid rendering remains lazy and source-led.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagramAffordance {
     /// Post-wrap, block-relative row offset of the affordance row (its index in
     /// the block's `output()` lines).
     pub row_offset: u16,
-    /// Diagram source (the fence body); the data every button acts on.
+    /// Source text the row's copy/render actions operate on.
     pub source: String,
+    /// Block kind, which determines the row's label and available buttons.
+    pub subject: AffordanceSubject,
 }
 
 /// Post-wrap end row of every pre-wrap line, indexed by pre-wrap line number.
@@ -435,28 +480,31 @@ fn continuation_row(line: Line<'static>) -> BlockLine {
     BlockLine::separator(line).with_joiner(Some(String::new()))
 }
 
-/// Insert a blank, non-selectable affordance row beneath each detected diagram
+/// Insert a blank, non-selectable affordance row beneath each copyable block
 /// and return one [`DiagramAffordance`] per inserted row (document order).
 ///
-/// The blank row reserves the vertical space the draw loop paints the
-/// `◇ mermaid [Open Image] [Copy Image Path] [Copy Source]` row into; it is a
-/// joiner-continuation of the diagram's last body line (so it neither shifts
-/// pre-wrap line indices nor reaches the clipboard), exactly like the fallback
-/// caption. Each returned `row_offset` is the row's final post-wrap index,
-/// accounting for the rows inserted above it. `source_for` is invoked once per
-/// non-empty diagram to supply its Mermaid source.
+/// The blank row reserves the vertical space the draw loop paints the subject's
+/// label/buttons into. It is a joiner-continuation of the block's last rendered
+/// line, so it neither shifts pre-wrap line indices nor reaches the clipboard.
+/// Each returned `row_offset` is the row's final post-wrap index, accounting for
+/// rows inserted above it. `subject_for` is invoked once per non-empty range to
+/// supply the source plus the row shape that acts on it.
 pub(crate) fn apply_affordance_rows(
     output: &mut BlockOutput,
     prewrap_ranges: &[Range<usize>],
-    mut source_for: impl FnMut(usize) -> String,
+    mut subject_for: impl FnMut(usize) -> (String, AffordanceSubject),
 ) -> Vec<DiagramAffordance> {
     let inserts = diagram_insert_rows(&output.lines, prewrap_ranges);
     let affordances: Vec<DiagramAffordance> = inserts
         .iter()
         .enumerate()
-        .map(|(k, &(insert_at, idx))| DiagramAffordance {
-            row_offset: (insert_at + k) as u16,
-            source: source_for(idx),
+        .map(|(k, &(insert_at, idx))| {
+            let (source, subject) = subject_for(idx);
+            DiagramAffordance {
+                row_offset: (insert_at + k) as u16,
+                source,
+                subject,
+            }
         })
         .collect();
     for &(insert_at, _) in inserts.iter().rev() {
@@ -481,6 +529,84 @@ mod tests {
         renderer.push(src);
         let view = renderer.finish(Some(get_syntect()));
         mermaid_blocks(&view)
+    }
+
+    /// Exercise the production span merge rather than reconstructing code/table
+    /// ordering in this test module.
+    fn copy_blocks(src: &str) -> Vec<CopyBlock> {
+        super::super::markdown_content::MarkdownContent::new(src).copy_blocks()
+    }
+
+    #[test]
+    fn copy_blocks_merge_code_table_and_mermaid_in_document_order() {
+        let src =
+            "```bash\necho hi\n```\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```mermaid\nA-->B\n```\n";
+        let blocks = copy_blocks(src);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].subject, AffordanceSubject::Code("bash".into()));
+        assert_eq!(blocks[1].subject, AffordanceSubject::Table);
+        assert_eq!(blocks[2].subject, AffordanceSubject::Mermaid);
+        assert!(
+            blocks
+                .windows(2)
+                .all(|pair| pair[0].prewrap_range.start < pair[1].prewrap_range.start)
+        );
+    }
+
+    #[test]
+    fn copy_block_for_fence_carries_exact_body() {
+        let blocks = copy_blocks("```bash\nprintf 'hello'\n```\n");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].source, "printf 'hello'\n");
+    }
+
+    #[test]
+    fn copy_block_for_table_carries_pipe_source_not_rendered_art() {
+        let blocks = copy_blocks("| A | B |\n|---|---|\n| 1 | 2 |\n");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].subject, AffordanceSubject::Table);
+        assert!(blocks[0].source.contains('|'));
+        assert!(
+            !blocks[0]
+                .source
+                .chars()
+                .any(|ch| matches!(ch, '│' | '─' | '┌' | '├')),
+            "table copy source must stay markdown: {:?}",
+            blocks[0].source,
+        );
+    }
+
+    #[test]
+    fn display_math_produces_no_copy_block() {
+        assert!(copy_blocks("$$\nx^2 + y^2\n$$\n").is_empty());
+    }
+
+    /// `copy_block_counts` feeds the off-screen height estimate without building
+    /// `copy_blocks`, so the two must never disagree — an under-count would make
+    /// the layout under-reserve rows for a message it cannot see.
+    #[test]
+    fn copy_block_counts_mirror_copy_blocks() {
+        for src in [
+            "just prose\n",
+            "```bash\necho hi\n```\n",
+            "| A |\n|---|\n| 1 |\n",
+            "```mermaid\nA-->B\n```\n",
+            "$$\nx^2\n$$\n",
+            "```bash\necho hi\n```\n\n| A |\n|---|\n| 1 |\n\n```mermaid\nA-->B\n```\n",
+            "```\nno info string\n```\n",
+        ] {
+            let content = super::super::markdown_content::MarkdownContent::new(src);
+            let blocks = content.copy_blocks();
+            let mermaid = blocks
+                .iter()
+                .filter(|b| b.subject == AffordanceSubject::Mermaid)
+                .count();
+            assert_eq!(
+                content.copy_block_counts(),
+                (blocks.len(), mermaid),
+                "src={src:?}"
+            );
+        }
     }
 
     #[test]
@@ -746,10 +872,20 @@ mod tests {
         // leading `◇ mermaid` label) with a fixed inter-button gap; every button
         // is clickable (no per-button enable flag).
         let start = UnicodeWidthStr::width(MERMAID_LABEL) as u16 + AFFORDANCE_GAP;
-        let buttons = affordance_buttons(start);
+        let buttons = affordance_buttons(
+            start,
+            &[
+                (AFFORDANCE_OPEN, AffordanceKind::Open),
+                (AFFORDANCE_COPY_PATH, AffordanceKind::CopyPath),
+                (AFFORDANCE_COPY_SOURCE, AffordanceKind::CopySource),
+            ],
+        );
         assert_eq!(
-            buttons.map(|b| (b.label, b.kind)),
-            [
+            buttons
+                .iter()
+                .map(|b| (b.label, b.kind))
+                .collect::<Vec<_>>(),
+            vec![
                 ("[Open Image]", AffordanceKind::Open),
                 ("[Copy Image Path]", AffordanceKind::CopyPath),
                 ("[Copy Source]", AffordanceKind::CopySource),
@@ -768,18 +904,29 @@ mod tests {
         // [Open Image] (12), [Copy Image Path] (17), [Copy Source] (13) with
         // gap-3 between.
         let start = UnicodeWidthStr::width(MERMAID_LABEL) as u16 + AFFORDANCE_GAP;
-        let idle = affordance_row(false);
-        assert_eq!(idle.label, (0, MERMAID_LABEL));
-        assert_eq!(idle.buttons.map(|b| b.col), [start, start + 15, start + 35]);
+        let idle = affordance_row(&AffordanceSubject::Mermaid, false);
+        assert_eq!(idle.label, (0, Cow::Borrowed(MERMAID_LABEL)));
         assert_eq!(
-            idle.buttons.map(|b| b.label),
-            ["[Open Image]", "[Copy Image Path]", "[Copy Source]"],
+            idle.buttons.iter().map(|b| b.col).collect::<Vec<_>>(),
+            vec![start, start + 15, start + 35]
+        );
+        assert_eq!(
+            idle.buttons.iter().map(|b| b.label).collect::<Vec<_>>(),
+            vec!["[Open Image]", "[Copy Image Path]", "[Copy Source]"],
+        );
+        assert_eq!(
+            idle.buttons.iter().map(|b| b.kind).collect::<Vec<_>>(),
+            vec![
+                AffordanceKind::Open,
+                AffordanceKind::CopyPath,
+                AffordanceKind::CopySource,
+            ],
         );
         assert_eq!(idle.status, None, "no status unless a render is in flight");
 
         // While rendering, the `rendering…` hint sits after the last button + gap;
         // the label and button columns are unchanged.
-        let busy = affordance_row(true);
+        let busy = affordance_row(&AffordanceSubject::Mermaid, true);
         let last = busy.buttons[2];
         let after = last.col + UnicodeWidthStr::width(last.label) as u16 + AFFORDANCE_GAP;
         assert_eq!(busy.status, Some((after, MERMAID_RENDERING)));
@@ -891,7 +1038,7 @@ mod tests {
         let sources = ["A-->B\n", "C-->D\n"];
         let mut iter = sources.into_iter();
         let affs = apply_affordance_rows(&mut out, &[0..1, 2..3], |_| {
-            iter.next().unwrap().to_string()
+            (iter.next().unwrap().to_string(), AffordanceSubject::Mermaid)
         });
 
         // One blank, non-selectable continuation row inserted per diagram.
@@ -913,6 +1060,8 @@ mod tests {
         assert!(matches!(out.lines[4].selectable, Selectable::None));
         assert_eq!(affs[0].source, "A-->B\n");
         assert_eq!(affs[1].source, "C-->D\n");
+        assert_eq!(affs[0].subject, AffordanceSubject::Mermaid);
+        assert_eq!(affs[1].subject, AffordanceSubject::Mermaid);
     }
 
     #[test]
@@ -920,7 +1069,9 @@ mod tests {
         // The diagram's single body pre-wrap line (index 1) wraps to two rows
         // [1,2]; the affordance row must land after the LAST wrapped row (3).
         let mut out = output_with_wraps(&[1, 2, 1]);
-        let affs = apply_affordance_rows(&mut out, &one(1..2), |_| "A-->B\n".to_string());
+        let affs = apply_affordance_rows(&mut out, &one(1..2), |_| {
+            ("A-->B\n".to_string(), AffordanceSubject::Mermaid)
+        });
         assert_eq!(affs.len(), 1);
         assert_eq!(affs[0].row_offset, 3);
         assert!(matches!(out.lines[3].selectable, Selectable::None));
