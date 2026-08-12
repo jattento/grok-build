@@ -193,6 +193,64 @@ Template for new entries:
   `ThemeKind::available()`.
 - Retire when: same as `theme/iterm.rs` above.
 
+### `crates/codegen/xai-grok-markdown/src/{output,render,streaming,buffers,parse,lib}.rs`
+
+- What: adds a public `TableSpan { source, output_line_range, source_byte_range }`
+  and a `tables` field on `MarkdownRenderOutput` / `MarkdownRenderView`, mirroring
+  the pre-existing `CodeBlockSpan` / `code_blocks` exactly — same shape, same
+  streaming rebase in `rerender_tail`. Plus a `TableReplace::is_table` flag,
+  because that buffer is shared with display-math blocks and only real tables get
+  a span.
+- Why here: a rendered table is box-drawing art; its `|`-delimited source is
+  consumed by the renderer and reaches no output type, so a copy affordance had
+  nothing to put on the clipboard. `SourceMap` is ANSI-path only, so the byte
+  range cannot be recovered downstream either. The span has to be emitted where
+  `table_base_line` and `TableReplace::range` are both in hand — inside
+  `render_ratatui`. No config, hook, or overlay seam exists for a new field on an
+  upstream output struct.
+- Retire when: upstream ships its own table spans (it already ships
+  `CodeBlockSpan`, so this is the obvious next step and would let us delete the
+  whole entry).
+
+### `crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs`
+
+- What: generalizes the affordance row from Mermaid-only to every copyable
+  markdown block. Adds `AffordanceSubject` (`Mermaid` / `Code(lang)` / `Table`),
+  `AffordanceKind::Copy`, a `CopyBlock` record, and turns `affordance_row` into
+  `affordance_row(subject, rendering)` with a `Vec<AffordanceButton>` and a
+  `Cow` label. Mermaid's label, buttons, columns and status are unchanged and
+  pinned by the existing tests.
+- Why here: the row-insertion, layout and hit-rect machinery already lives in
+  this file and is the single source of truth shared with the painter. Wrapping
+  it from `overlay/` would mean duplicating that layout and reintroducing exactly
+  the paint/hit-rect drift the module is written to prevent.
+- Why the file keeps its Mermaid name: renaming it would rewrite every import
+  and inflate the rebase surface for zero behavioural gain.
+- Retire when: upstream adds copy affordances for code blocks and tables.
+
+### `crates/codegen/xai-grok-pager/src/scrollback/blocks/{markdown_content,agent}.rs`
+
+- What: `MarkdownContent::copy_blocks()` merges the view's code-block and table
+  spans into one document-ordered list, `copy_block_counts()` counts them without
+  allocating, and `AgentMessageBlock` drives affordance rows from that list
+  instead of from Mermaid alone (caching the counts at construction/finish so the
+  off-screen height estimate never rescans).
+- Why here: these are the producers of the block's `output()` and of
+  `diagram_affordances()`; the inserted rows and their anchored offsets must come
+  from one layout pass, which only this code performs.
+- Retire when: same as the entry above.
+
+### `crates/codegen/xai-grok-pager/src/{scrollback/render.rs,app/agent_view/media.rs,app/agent_view/paste.rs}`
+
+- What: threads `AffordanceSubject` through `DiagramAffordancePlacement` into the
+  painter, which now asks the row for its label/buttons per subject, skips the
+  Mermaid render-state hash for code/table rows, and routes
+  `AffordanceKind::Copy` to `copy_to_clipboard`. `paste.rs` is test-only fallout
+  from the changed signatures.
+- Why here: the placement struct and the painter are the only path from a
+  rendered row to a click hit-rect.
+- Retire when: same as the entries above.
+
 ### `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs`
 
 - What: adds `ItermGreen` and `CodexDark` arms (routed through

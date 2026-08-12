@@ -1300,6 +1300,7 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
                         range: state.range,
                         line_source_offsets,
                         hyperlinks,
+                        is_table: true,
                     });
                 }
                 None
@@ -1547,6 +1548,7 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
             range,
             line_source_offsets,
             hyperlinks: Vec::new(),
+            is_table: false,
         });
         true
     }
