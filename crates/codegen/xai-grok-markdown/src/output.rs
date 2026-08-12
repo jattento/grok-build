@@ -73,6 +73,33 @@ pub struct CodeBlockSpan {
     pub source_byte_range: Range<usize>,
 }
 
+/// A GFM table discovered during rendering.
+///
+/// The table's `|`-delimited source is replaced on screen by box-drawing art,
+/// so the pipe form is unrecoverable from the rendered lines. This span keeps
+/// it, which is what a copy affordance has to put on the clipboard.
+///
+/// Display-math blocks (`$$…$$`) share the renderer's table machinery but are
+/// not tables and produce no span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSpan {
+    /// The table's `|`-delimited markdown source, verbatim, without the
+    /// trailing newline the renderer consumes past the last row.
+    pub source: String,
+
+    /// Range of **pre-wrap** rendered lines this table occupies, as indices
+    /// into [`MarkdownRenderOutput::lines`] / [`MarkdownRenderView::lines`].
+    ///
+    /// Covers the whole rendered table: borders, header, separator and body.
+    pub output_line_range: Range<usize>,
+
+    /// Byte range of the table in the **raw** source text.
+    ///
+    /// Extends past the last row to the line ending the renderer consumes, so
+    /// it is not always the exact span of [`source`](Self::source).
+    pub source_byte_range: Range<usize>,
+}
+
 /// Output from rendering markdown to ratatui Lines.
 ///
 /// Contains all the information needed to display rendered markdown and
@@ -93,6 +120,10 @@ pub struct MarkdownRenderOutput {
     /// Fenced code blocks discovered during rendering, in document order.
     /// One entry per closed fenced block; see [`CodeBlockSpan`].
     pub code_blocks: Vec<CodeBlockSpan>,
+
+    /// GFM tables discovered during rendering, in document order.
+    /// See [`TableSpan`].
+    pub tables: Vec<TableSpan>,
 }
 
 impl MarkdownRenderOutput {
@@ -107,6 +138,7 @@ impl MarkdownRenderOutput {
         self.line_source_map.clear();
         self.hyperlinks.clear();
         self.code_blocks.clear();
+        self.tables.clear();
     }
 
     /// Get a borrowed view of this output.
@@ -116,6 +148,7 @@ impl MarkdownRenderOutput {
             line_source_map: &self.line_source_map,
             hyperlinks: &self.hyperlinks,
             code_blocks: &self.code_blocks,
+            tables: &self.tables,
         }
     }
 }
@@ -138,6 +171,10 @@ pub struct MarkdownRenderView<'a> {
     /// Fenced code blocks discovered during rendering, in document order.
     /// One entry per closed fenced block; see [`CodeBlockSpan`].
     pub code_blocks: &'a [CodeBlockSpan],
+
+    /// GFM tables discovered during rendering, in document order.
+    /// See [`TableSpan`].
+    pub tables: &'a [TableSpan],
 }
 
 impl<'a> MarkdownRenderView<'a> {

@@ -525,6 +525,7 @@ impl<'a, 'b> ParsedMarkdown<'a, 'b> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut line_source_map: Vec<usize> = Vec::new();
         let mut hyperlinks: Vec<HyperlinkTarget> = Vec::new();
+        let mut tables: Vec<crate::output::TableSpan> = Vec::new();
 
         let mut last_pos = 0;
         let mut replace: Option<usize> = None;
@@ -900,6 +901,20 @@ impl<'a, 'b> ParsedMarkdown<'a, 'b> {
                                 id: link.id,
                             });
                         }
+                        // Keep the `|`-delimited source: the rendered lines are
+                        // box-drawing art, so nothing downstream could
+                        // reconstruct it. Skipped for display-math blocks,
+                        // which share this buffer but are not tables.
+                        if trepl.is_table {
+                            tables.push(crate::output::TableSpan {
+                                source: self.text[trepl.range.clone()]
+                                    .trim_end_matches('\n')
+                                    .trim_end_matches('\r')
+                                    .to_string(),
+                                output_line_range: table_base_line..lines.len(),
+                                source_byte_range: trepl.range.clone(),
+                            });
+                        }
                         // Table emits whole pre-rendered lines; reset col so
                         // any subsequent inline content starts at column 0.
                         cur_col_in_line = 0;
@@ -1143,6 +1158,7 @@ impl<'a, 'b> ParsedMarkdown<'a, 'b> {
                 line_source_map,
                 hyperlinks,
                 code_blocks,
+                tables,
             },
             checkpoint,
         )
@@ -3062,5 +3078,74 @@ mod entity_tests {
             let _ = render_markdown(text, test_style::STYLE, true, None);
             let _ = render_markdown(text, test_style::STYLE, false, None);
         }
+    }
+}
+
+/// `TableSpan`: the copyable, `|`-delimited source behind a rendered table.
+#[cfg(test)]
+mod table_span_tests {
+    use crate::render_markdown_ratatui_full;
+    use crate::style::test_style;
+
+    fn lines_to_text(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// A GFM table yields one `TableSpan` carrying the original pipe source,
+    /// not the box-drawing art that replaces it on screen.
+    #[test]
+    fn test_table_span_keeps_pipe_source() {
+        let md = "intro\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nbye\n";
+        let (output, _) = render_markdown_ratatui_full(md, test_style::STYLE, true, None);
+        assert_eq!(output.tables.len(), 1);
+        let span = &output.tables[0];
+        assert_eq!(span.source, "| A | B |\n|---|---|\n| 1 | 2 |");
+        assert!(
+            !span.source.contains(['\u{2502}', '\u{2500}']),
+            "source must be the markdown, not the rendering: {:?}",
+            span.source
+        );
+        // The range covers the rendered table and nothing else.
+        let rendered = lines_to_text(&output.lines);
+        let table = &rendered[span.output_line_range.clone()];
+        assert!(
+            table.iter().all(|l| l.contains(['\u{2502}', '\u{2500}'])),
+            "every table row should be box-drawn: {table:?}"
+        );
+        assert!(
+            !table
+                .iter()
+                .any(|l| l.contains("intro") || l.contains("bye"))
+        );
+    }
+
+    /// Two tables come back in document order with disjoint line ranges.
+    #[test]
+    fn test_multiple_table_spans_in_order() {
+        let md = "| A |\n|---|\n| 1 |\n\ntext\n\n| B |\n|---|\n| 2 |\n";
+        let (output, _) = render_markdown_ratatui_full(md, test_style::STYLE, true, None);
+        assert_eq!(output.tables.len(), 2);
+        assert!(output.tables[0].source.contains("| A |"));
+        assert!(output.tables[1].source.contains("| B |"));
+        assert!(output.tables[0].output_line_range.end <= output.tables[1].output_line_range.start);
+    }
+
+    /// Display math reuses the renderer's table machinery but is not a table.
+    #[test]
+    fn test_display_math_yields_no_table_span() {
+        let md = "$$\nx = 1\n$$\n";
+        let (output, _) = render_markdown_ratatui_full(md, test_style::STYLE, true, None);
+        assert!(output.tables.is_empty(), "{:?}", output.tables);
+    }
+
+    /// Raw (non-pretty) mode performs no table replacement, so there is no span.
+    #[test]
+    fn test_no_table_span_in_raw_mode() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |\n";
+        let (output, _) = render_markdown_ratatui_full(md, test_style::STYLE, false, None);
+        assert!(output.tables.is_empty());
     }
 }

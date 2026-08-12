@@ -321,6 +321,11 @@ impl StreamingMarkdownRenderer {
         self.output
             .code_blocks
             .retain(|cb| cb.output_line_range.end <= self.frozen.lines_len);
+        // Same for table spans: a table only renders once its final row has
+        // arrived, so a tail-rendered span is stale until frozen.
+        self.output
+            .tables
+            .retain(|t| t.output_line_range.end <= self.frozen.lines_len);
 
         // Render the tail (unfrozen portion) using reusable buffers.
         // When the frozen source ends without a trailing newline (e.g., a
@@ -383,6 +388,17 @@ impl StreamingMarkdownRenderer {
                 cb.source_byte_range.start += tail_start;
                 cb.source_byte_range.end += tail_start;
                 cb
+            }));
+
+        // Append tail table spans, rebased the same way.
+        self.output
+            .tables
+            .extend(tail_output.tables.into_iter().map(|mut t| {
+                t.output_line_range.start += frozen_lines;
+                t.output_line_range.end += frozen_lines;
+                t.source_byte_range.start += tail_start;
+                t.source_byte_range.end += tail_start;
+                t
             }));
 
         // Detect plain URLs (e.g. the `(url)` suffix in pretty-mode

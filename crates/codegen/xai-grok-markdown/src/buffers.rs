@@ -232,6 +232,12 @@ pub struct TableReplace {
     /// table-local coordinates; the renderer translates them to absolute
     /// `HyperlinkTarget`s.
     pub hyperlinks: Vec<TableHyperlink>,
+    /// Whether `range` really covers a GFM table.
+    ///
+    /// This buffer is shared with display-math blocks (`$$…$$`), which reuse
+    /// the same whole-line replacement machinery. Only a `true` entry is a
+    /// table, so only those become a public [`crate::TableSpan`].
+    pub is_table: bool,
 }
 
 /// Rendered Mermaid diagram replacement for pretty mode rendering.
