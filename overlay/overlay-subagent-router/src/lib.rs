@@ -22,8 +22,8 @@ pub use decision::{
     WindowClass, decide_route, tool_ceiling_for_task_type,
 };
 pub use fallback::{
-    ProviderRetryDecision, configured_provider_retry_plan, is_retryable_provider_failure,
-    next_provider_retry, provider_for_model, provider_retry_exhausted_error,
+    ProviderRetryDecision, configured_provider_retry_plan, next_provider_retry, provider_for_model,
+    provider_retry_error,
 };
 pub use notify::{
     Notifier, OsascriptNotifier, SpyNotifier, notify_override, notify_provider_error,

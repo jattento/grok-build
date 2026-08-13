@@ -76,6 +76,27 @@ Template for new entries:
 - Why here: the resolver depends on shell-private model/auth state.
 - Retire when: same as the child retry touchpoint above.
 
+### `crates/codegen/xai-grok-shell/src/sampling/error.rs`
+
+- What: adds helpers that preserve the canonical sampling retryability decision
+  as a structured ACP error-data marker for subagent provider failover, while
+  retaining existing user-facing error formats and excluding retry vetoes.
+- Why here: this is the shared ACP error-data boundary; the child runner
+  otherwise sees only rendered error text and cannot distinguish transient
+  failures from idle timeouts, context overflow, or a server
+  `x-should-retry: false` veto.
+- Retire when: ACP exposes typed sampling retryability directly to child turns.
+
+### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs`
+
+- What: computes provider-failover eligibility from the terminal rich
+  `SamplingError` and attaches it to the final ACP error returned by the normal
+  session-turn path.
+- Why here: this is the last point that still has the typed error and the first
+  that knows internal sampler recovery is terminal; annotating earlier would
+  leak intermediate attempts, and annotating later would require text parsing.
+- Retire when: same as the sampling error marker touchpoint above.
+
 ### `crates/codegen/xai-grok-subagent-resolution/src/overrides.rs`
 
 - What: initializes the new internal provider fallback list in a test helper.
