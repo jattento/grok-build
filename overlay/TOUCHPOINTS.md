@@ -60,21 +60,37 @@ Template for new entries:
   creating a second subagent/session identity.
 - Retire when: upstream exposes a provider-fallback hook inside child sampling.
 
+### `crates/codegen/xai-grok-shell/src/agent/subagent/attempt_runner.rs`
 ### `crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs`
 
 - What: retry a provider-classified failed first turn on one representative
-  model from each remaining configured provider, rewinding the failed prompt,
-  switching the existing child session in place, and stopping at first success.
-- Why here: this is the only boundary that sees the real provider sampling
-  error while still owning the existing child identity and prompt lifecycle.
-- Retire when: upstream supports provider-distinct failover for subagent turns.
+  model from each remaining configured provider, but only before any streamed
+  output or tool execution; switch the existing child session in place and
+  retain the model that successfully completed the child.
+- Why here: this is the only boundary that owns the existing child identity,
+  prompt lifecycle, tool-call counters, and coordinator lifecycle metadata.
+- Retire when: upstream supports side-effect-safe provider-distinct failover for
+  subagent turns.
 
 ### `crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs`
+### `crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs`
 
-- What: exposes the existing model-override resolver within the crate so the
-  retry path can resolve each configured fallback model safely.
-- Why here: the resolver depends on shell-private model/auth state.
+- What: exposes the existing model-override resolver within the crate and
+  updates durable subagent metadata with the model that successfully completed
+  an in-place fallback; the crate's own test module covers that the durable
+  metadata write survives for a later resume.
+- Why here: the resolver and atomic subagent metadata writer are shell-private.
 - Retire when: same as the child retry touchpoint above.
+
+### `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs`
+### `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_state.rs`
+### `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs`
+
+- What: lets a live child update its coordinator-owned effective model after a
+  successful in-place fallback, so completion and `resume_from` use that model.
+- Why here: the coordinator owns active/completed child identity and in-memory
+  resume lookup; the shell runner cannot mutate those records directly.
+- Retire when: effective model is derived from the completed child session.
 
 ### `crates/codegen/xai-grok-shell/src/sampling/error.rs`
 
@@ -88,14 +104,17 @@ Template for new entries:
 - Retire when: ACP exposes typed sampling retryability directly to child turns.
 
 ### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs`
+### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs`
+### `crates/codegen/xai-grok-shell/src/session/streaming_capture.rs`
+### `crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs`
 
 - What: computes provider-failover eligibility from the terminal rich
-  `SamplingError` and attaches it to the final ACP error returned by the normal
-  session-turn path.
-- Why here: this is the last point that still has the typed error and the first
-  that knows internal sampler recovery is terminal; annotating earlier would
-  leak intermediate attempts, and annotating later would require text parsing.
-- Retire when: same as the sampling error marker touchpoint above.
+  `SamplingError`, waits until terminal stream events are drained, and withholds
+  the retry marker after any streamed output or model-requested tool operation.
+- Why here: these files jointly own typed sampling errors and ordered streaming
+  state; later layers would need unsafe text parsing or could race event drain.
+- Retire when: the sampler directly reports whether a failed attempt is safe to
+  replay through ACP.
 
 ### `crates/codegen/xai-grok-subagent-resolution/src/overrides.rs`
 

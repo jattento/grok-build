@@ -847,17 +847,19 @@ impl SessionActor {
             self.log_terminal_failure("output_budget_usage_unknown", error.status_code, &message);
             return Err(acp::Error::internal_error().data(message));
         }
-        if self.tool_context.sampler_retry_only_before_output {
+        if self.tool_context.sampler_retry_only_before_output
+            && self.streaming_turn_capture.lock().has_replay_risk()
+        {
             let handle = self.chat_state_handle.clone();
             tokio::spawn(async move {
                 let _ = handle.mark_usage_incomplete(true, true).await;
             });
             let message = format!(
-                "workflow child model request failed; usage may understate real spend: {}",
+                "workflow child model request failed after partial output; refusing to replay the turn: {}",
                 error.message
             );
             self.log_terminal_failure(
-                "workflow_child_sampling_failed",
+                "workflow_child_sampling_failed_after_output",
                 error.status_code,
                 &message,
             );
@@ -1201,9 +1203,20 @@ impl SessionActor {
                 ))
             }
             Err(rich_err) => {
-                self.turn_stream_drained.lock().take();
-                let retryable_provider_failure =
-                    rich_err.is_retryable() && !rich_err.is_retry_vetoed();
+                let stream_drained =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), stream_drained_rx)
+                        .await
+                        .is_ok();
+                if !stream_drained {
+                    self.turn_stream_drained.lock().take();
+                    tracing::warn!(
+                        "stream-drain barrier timed out while classifying a failed turn"
+                    );
+                }
+                let retryable_provider_failure = stream_drained
+                    && rich_err.is_retryable()
+                    && !rich_err.is_retry_vetoed()
+                    && !self.streaming_turn_capture.lock().has_replay_risk();
                 let info = xai_grok_sampler::SamplingErrorInfo::from(&rich_err);
                 match self.handle_sampling_failure(info).await.map_err(|error| {
                     crate::sampling::error::with_retryable_provider_failure(

@@ -26,6 +26,7 @@ pub(super) struct OneTurnAttemptOutcome {
     pub trace: OneTurnTraceCapture,
     pub cancellation_may_hide_usage: bool,
     pub retryable_provider_failure: bool,
+    pub safe_to_replay: bool,
 }
 pub(super) struct OneTurnUsageInput<'a> {
     pub child_handle: &'a SessionHandle,
@@ -84,11 +85,14 @@ pub(super) async fn run_one_turn_attempt(
         persist_ack: None,
         parsed_prompt_tx: None,
     });
+    let initial_tool_call_count = signals_snapshot_counts(input.child_handle).await.0;
     let mut turn_token_totals = None;
     let mut cancellation_may_hide_usage = false;
     let mut retryable_provider_failure = false;
     let wait_outcome =
         await_subagent_turn_or_cancellation(prompt_rx, input.cancel_token.clone()).await;
+    let safe_to_replay =
+        signals_snapshot_counts(input.child_handle).await.0 == initial_tool_call_count;
     let duration_ms = input.child_run_started_at.elapsed().as_millis() as u64;
     let result = match wait_outcome {
         SubagentWaitOutcome::Cancelled => {
@@ -255,6 +259,7 @@ pub(super) async fn run_one_turn_attempt(
         },
         cancellation_may_hide_usage,
         retryable_provider_failure,
+        safe_to_replay,
     }
 }
 pub(super) fn canonical_total_tokens(totals: &xai_chat_state::UsageTotals) -> u64 {

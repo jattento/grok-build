@@ -2513,6 +2513,31 @@ struct GcsUploadContext {
 /// recoverable ref. Also re-asserts the terminal `status` so a failed
 /// `persist_subagent_completion` write can't leave a non-terminal record that
 /// `resumable_source_for` rejects after the worktree is removed.
+fn update_subagent_meta_effective_model(dir: &Path, effective_model_id: &str) -> bool {
+    let meta_path = dir.join("meta.json");
+    let mut meta = match std::fs::read_to_string(&meta_path) {
+        Ok(data) => match serde_json::from_str::<SubagentMeta>(&data) {
+            Ok(meta) => meta,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "failed to parse subagent meta; effective model not persisted"
+                );
+                return false;
+            }
+        },
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "failed to read subagent meta; effective model not persisted"
+            );
+            return false;
+        }
+    };
+    meta.effective_model_id = Some(effective_model_id.to_string());
+    write_subagent_meta(dir, &meta)
+}
+
 fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str, status: &str) -> bool {
     let meta_path = dir.join("meta.json");
     let mut meta = match std::fs::read_to_string(&meta_path) {

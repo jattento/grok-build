@@ -503,6 +503,17 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 );
                 let _ = respond_to.send(true);
             }
+            InternalEvent::EffectiveModelChanged {
+                subagent_id,
+                effective_model_id,
+                respond_to,
+            } => {
+                let updated = self.active.get_mut(&subagent_id).is_some_and(|child| {
+                    child.effective_model_id = effective_model_id;
+                    true
+                });
+                let _ = respond_to.send(updated);
+            }
             InternalEvent::ResumeSource {
                 source_id,
                 parent_session_id,

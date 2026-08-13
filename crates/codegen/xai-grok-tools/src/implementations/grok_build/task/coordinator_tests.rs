@@ -37,6 +37,7 @@ impl ChildControl for TestControl {
 struct TestRunner {
     wait_before_start: bool,
     wait_after_cancel: bool,
+    changed_model: Option<String>,
     start: tokio::sync::broadcast::Sender<()>,
     finish: tokio::sync::broadcast::Sender<()>,
     completions: mpsc::UnboundedSender<CompletionDisposition>,
@@ -55,6 +56,7 @@ impl ChildRunner for TestRunner {
     fn run(&self, run: ChildRunRequest<Self::Control>) -> Self::RunFuture {
         let wait_before_start = self.wait_before_start;
         let wait_after_cancel = self.wait_after_cancel;
+        let changed_model = self.changed_model.clone();
         let mut start = self.start.subscribe();
         let mut finish = self.finish.subscribe();
         let requests = self.requests.clone();
@@ -108,6 +110,9 @@ impl ChildRunner for TestRunner {
                 };
             }
             let _ = started.send(request.id.clone());
+            if let Some(changed_model) = changed_model {
+                assert!(reporter.effective_model_changed(changed_model).await);
+            }
             let result = tokio::select! {
                 _ = cancellation.cancelled() => {
                     if wait_after_cancel {
@@ -194,6 +199,7 @@ struct Harness {
     requests: mpsc::UnboundedReceiver<SubagentRequest>,
     started: mpsc::UnboundedReceiver<String>,
     queue_waits: mpsc::UnboundedReceiver<(String, Option<std::time::Duration>, usize)>,
+    internal: mpsc::UnboundedSender<InternalEvent<TestControl>>,
     actor: tokio::task::JoinHandle<()>,
 }
 
@@ -216,6 +222,15 @@ fn harness_with_options(
     wait_after_cancel: bool,
     config: CoordinatorConfig,
 ) -> Harness {
+    harness_with_changed_model(wait_before_start, wait_after_cancel, config, None)
+}
+
+fn harness_with_changed_model(
+    wait_before_start: bool,
+    wait_after_cancel: bool,
+    config: CoordinatorConfig,
+    changed_model: Option<String>,
+) -> Harness {
     let (command_tx, command_rx) = mpsc::unbounded_channel();
     let (start, _) = tokio::sync::broadcast::channel(4);
     let (finish, _) = tokio::sync::broadcast::channel(4);
@@ -223,23 +238,23 @@ fn harness_with_options(
     let (request_tx, requests) = mpsc::unbounded_channel();
     let (started_tx, started) = mpsc::unbounded_channel();
     let (queue_wait_tx, queue_waits) = mpsc::unbounded_channel();
-    let actor = tokio::spawn(
-        SubagentCoordinator::new(
-            command_rx,
-            TestRunner {
-                wait_before_start,
-                wait_after_cancel,
-                start: start.clone(),
-                finish: finish.clone(),
-                completions: completion_tx,
-                requests: request_tx,
-                started: started_tx,
-                queue_waits: queue_wait_tx,
-            },
-            config,
-        )
-        .run(),
+    let coordinator = SubagentCoordinator::new(
+        command_rx,
+        TestRunner {
+            wait_before_start,
+            wait_after_cancel,
+            changed_model,
+            start: start.clone(),
+            finish: finish.clone(),
+            completions: completion_tx,
+            requests: request_tx,
+            started: started_tx,
+            queue_waits: queue_wait_tx,
+        },
+        config,
     );
+    let internal = coordinator.internal_tx.clone();
+    let actor = tokio::spawn(coordinator.run());
     Harness {
         // Unbound by default so tests can set request.parent_session_id
         // freely (e.g. nested reparent). ParentSession APIs must use
@@ -251,6 +266,7 @@ fn harness_with_options(
         requests,
         started,
         queue_waits,
+        internal,
         actor,
     }
 }
@@ -286,6 +302,38 @@ async fn outstanding(backend: &ChannelBackend, prompt_id: &str) -> SubagentOutst
         }))
         .expect("actor command channel open");
     response_rx.await.expect("outstanding response")
+}
+
+#[tokio::test]
+async fn effective_model_change_is_retained_for_completed_resume() {
+    let harness = harness_with_changed_model(
+        false,
+        false,
+        CoordinatorConfig::default(),
+        Some("fallback-model".to_owned()),
+    );
+    let spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("model-switch", false)).await }
+    });
+    tokio::task::yield_now().await;
+    let _ = harness.finish.send(());
+    assert!(spawn.await.unwrap().unwrap().success);
+
+    let (tx, rx) = oneshot::channel();
+    harness
+        .internal
+        .send(InternalEvent::ResumeSource {
+            source_id: "model-switch".to_owned(),
+            parent_session_id: "parent".to_owned(),
+            respond_to: tx,
+        })
+        .expect("actor internal channel open");
+    let SubagentResumeLookup::Completed(source) = rx.await.expect("resume lookup") else {
+        panic!("completed child must be resumable");
+    };
+    assert_eq!(source.model_id.as_deref(), Some("fallback-model"));
+    harness.actor.abort();
 }
 
 #[tokio::test]
