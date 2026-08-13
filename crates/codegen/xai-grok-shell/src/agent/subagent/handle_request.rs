@@ -54,6 +54,7 @@ pub(super) fn task_model_override_error(
     let requested = requested?;
     crate::agent::models::task_model_error_for_catalog(requested, available, is_session_auth)
 }
+
 /// Runtime adapter for one shell child. Shared lifecycle state is owned by the
 /// `xai-grok-tools` coordinator actor and reached only through `reporter`.
 #[tracing::instrument(
@@ -1206,43 +1207,135 @@ pub(crate) async fn run_shell_child(
             .cmd_tx
             .send(SessionCommand::SetToolOverrides { overrides });
     }
-    let (prompt_tx, prompt_rx) = oneshot::channel();
     let prompt_text = task_prompt_text;
     let child_prompt_id = uuid::Uuid::now_v7().to_string();
     let turn_started_at = chrono::Utc::now().to_rfc3339();
-    let _ = child_handle.cmd_tx.send(SessionCommand::Prompt {
-        prompt_id: child_prompt_id.clone(),
-        prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(prompt_text))],
-        prompt_mode: crate::session::plan_mode::PromptMode::Agent,
-        artifact_upload_ctx: ctx.gcs_bucket_url.as_ref().and_then(|_| {
-            ctx.gcs_upload_method.as_ref().map(|method| {
-                crate::upload::manifest::ArtifactUploadContext {
-                    gcs_config: crate::session::repo_changes::TraceExportConfig {
-                        bucket_url: ctx.gcs_bucket_url.clone(),
-                        service_account_key: None,
-                        prefix_dir: None,
-                        gcs_prefix: Some(format!("{}/turn_0", child_session_id.0)),
-                        absolute_paths: false,
-                        archive_name_override: None,
-                        upload_method: method.clone(),
+    let run_prompt = || {
+        let (prompt_tx, prompt_rx) = oneshot::channel();
+        let _ = child_handle.cmd_tx.send(SessionCommand::Prompt {
+            prompt_id: child_prompt_id.clone(),
+            prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
+                prompt_text.clone(),
+            ))],
+            prompt_mode: crate::session::plan_mode::PromptMode::Agent,
+            artifact_upload_ctx: ctx.gcs_bucket_url.as_ref().and_then(|_| {
+                ctx.gcs_upload_method.as_ref().map(|method| {
+                    crate::upload::manifest::ArtifactUploadContext {
+                        gcs_config: crate::session::repo_changes::TraceExportConfig {
+                            bucket_url: ctx.gcs_bucket_url.clone(),
+                            service_account_key: None,
+                            prefix_dir: None,
+                            gcs_prefix: Some(format!("{}/turn_0", child_session_id.0)),
+                            absolute_paths: false,
+                            archive_name_override: None,
+                            upload_method: method.clone(),
+                        },
+                        artifact_tracker: crate::upload::manifest::new_artifact_tracker(),
+                    }
+                })
+            }),
+            client_identifier: None,
+            screen_mode: None,
+            verbatim: true,
+            traceparent: xai_file_utils::trace_context::current_traceparent(),
+            json_schema: request.runtime_overrides.output_schema.clone(),
+            send_now: false,
+            admission: None,
+            tool_overrides_update: None,
+            respond_to: prompt_tx,
+            persist_ack: None,
+            parsed_prompt_tx: None,
+        });
+        prompt_rx
+    };
+    let mut wait_outcome =
+        await_subagent_turn_or_cancellation(run_prompt(), cancel_token.clone()).await;
+    let mut attempted_providers: Vec<String> = request
+        .runtime_overrides
+        .primary_provider
+        .clone()
+        .into_iter()
+        .collect();
+    let mut failed_prompt_needs_rewind = true;
+    while let SubagentWaitOutcome::TurnResult(turn_result) = &wait_outcome {
+        let error = match turn_result.as_ref() {
+            Ok(Err(error)) if !cancel_token.is_cancelled() => error.to_string(),
+            _ => break,
+        };
+        let overlay_subagent_router::ProviderRetryDecision::Retry { provider, model } =
+            overlay_subagent_router::next_provider_retry(
+                &error,
+                &mut request.runtime_overrides.provider_fallback_models,
+            )
+        else {
+            break;
+        };
+        let Some((sampling_config, model_id)) = resolve_model_override_to_config(&model, &ctx)
+        else {
+            tracing::warn!(provider = %provider, model = %model, "provider fallback model is unavailable");
+            continue;
+        };
+        if failed_prompt_needs_rewind {
+            let (rewind_tx, rewind_rx) = oneshot::channel();
+            if child_handle
+                .cmd_tx
+                .send(SessionCommand::Rewind {
+                    request: crate::session::acp_types::RewindRequest {
+                        target_prompt_index: 0,
+                        force: true,
+                        mode: crate::session::acp_types::RewindMode::ConversationOnly,
                     },
-                    artifact_tracker: crate::upload::manifest::new_artifact_tracker(),
+                    respond_to: rewind_tx,
+                })
+                .is_err()
+            {
+                break;
+            }
+            match rewind_rx.await {
+                Ok(Ok(response)) if response.success => {
+                    failed_prompt_needs_rewind = false;
                 }
+                Ok(Ok(response)) => {
+                    tracing::warn!(provider = %provider, model = %model, error = ?response.error, "provider fallback could not rewind failed prompt");
+                    break;
+                }
+                Ok(Err(rewind_error)) => {
+                    tracing::warn!(provider = %provider, model = %model, error = %rewind_error, "provider fallback rewind failed");
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+        tracing::warn!(provider = %provider, model = %model, error = %error, "retrying subagent turn with another provider");
+        let (model_tx, model_rx) = oneshot::channel();
+        if child_handle
+            .cmd_tx
+            .send(SessionCommand::SetSessionModel {
+                sampling_config,
+                use_concise: false,
+                apply_prompt_override: false,
+                skip_prompt_rewrite: true,
+                auto_compact_threshold_percent: ctx
+                    .resolve_auto_compact_threshold_percent(model_id.0.as_ref()),
+                responds_to: model_tx,
             })
-        }),
-        client_identifier: None,
-        screen_mode: None,
-        verbatim: true,
-        traceparent: xai_file_utils::trace_context::current_traceparent(),
-        json_schema: request.runtime_overrides.output_schema.clone(),
-        send_now: false,
-        admission: None,
-        tool_overrides_update: None,
-        respond_to: prompt_tx,
-        persist_ack: None,
-        parsed_prompt_tx: None,
-    });
-    let wait_outcome = await_subagent_turn_or_cancellation(prompt_rx, cancel_token.clone()).await;
+            .is_err()
+        {
+            break;
+        }
+        match model_rx.await {
+            Ok(Ok(_)) => {
+                attempted_providers.push(provider);
+                wait_outcome =
+                    await_subagent_turn_or_cancellation(run_prompt(), cancel_token.clone()).await;
+                failed_prompt_needs_rewind = true;
+            }
+            Ok(Err(model_error)) => {
+                tracing::warn!(provider = %provider, model = %model, error = %model_error, "provider fallback model switch failed");
+            }
+            Err(_) => break,
+        }
+    }
     let duration_ms = start.elapsed().as_millis() as u64;
     let mut turn_token_totals: Option<(u64, u64, u64)> = None;
     let mut cancellation_may_hide_usage = false;
@@ -1411,7 +1504,10 @@ pub(crate) async fn run_shell_child(
                         error: Some(if was_cancelled {
                             "Subagent was cancelled".to_string()
                         } else {
-                            format!("Session error: {e}")
+                            overlay_subagent_router::provider_retry_exhausted_error(
+                                &e.to_string(),
+                                &attempted_providers,
+                            )
                         }),
                         subagent_id: request.id.clone(),
                         child_session_id: child_session_id.0.to_string(),

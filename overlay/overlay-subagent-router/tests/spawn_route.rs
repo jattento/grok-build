@@ -199,7 +199,7 @@ fn e2e_override_path_notifies() {
 }
 
 #[test]
-fn e2e_scout_tool_ceiling_explore() {
+fn e2e_scout_tool_ceiling_is_unrestricted() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("subagent-router.toml");
     std::fs::write(&path, STARTER_TOML).unwrap();
@@ -220,7 +220,7 @@ fn e2e_scout_tool_ceiling_explore() {
         &sensor,
         &spy,
     );
-    assert_eq!(d.tool_ceiling, "explore");
+    assert_eq!(d.tool_ceiling, "general-purpose");
     assert_eq!(d.source, RouteSource::Routed);
     println!("scout_route model={:?} ceiling={}", d.model, d.tool_ceiling);
 }

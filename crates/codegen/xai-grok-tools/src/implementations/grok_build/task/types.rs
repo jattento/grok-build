@@ -152,6 +152,12 @@ pub struct SubagentRuntimeOverrides {
     pub model_override_provenance: ModelOverrideProvenance,
     /// Override reasoning effort (e.g. "low", "medium", "high").
     pub reasoning_effort: Option<String>,
+    /// Provider selected for the first attempt, when known from router config.
+    /// Internal harness data: never exposed on the model-facing task schema.
+    pub primary_provider: Option<String>,
+    /// Ordered provider-distinct model fallbacks for retryable sampling failures.
+    /// Internal harness data: never exposed on the model-facing task schema.
+    pub provider_fallback_models: Vec<(String, String)>,
     /// Named persona/SOUL template to apply.
     pub persona: Option<String>,
     /// Capability mode controlling tool access.

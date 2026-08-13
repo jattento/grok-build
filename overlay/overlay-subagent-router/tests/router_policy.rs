@@ -1,9 +1,10 @@
 //! Policy tests for the shipped router decision function.
 
 use overlay_subagent_router::{
-    NotifyKind, ProviderUsageSnapshot, RouteInput, RouteSource, RouterConfig, STARTER_TOML,
-    SpyNotifier, UsageWindowSnap, decide_route, load_config_from_str, notify_override,
-    notify_provider_error, tool_ceiling_for_task_type,
+    NotifyKind, ProviderRetryDecision, ProviderUsageSnapshot, RouteInput, RouteSource,
+    RouterConfig, STARTER_TOML, SpyNotifier, UsageWindowSnap, decide_route, load_config_from_str,
+    next_provider_retry, notify_override, notify_provider_error, provider_retry_exhausted_error,
+    tool_ceiling_for_task_type,
 };
 
 fn starter() -> RouterConfig {
@@ -21,13 +22,119 @@ fn input(task: &str, complexity: &str, vision: bool) -> RouteInput {
 
 #[test]
 fn tool_ceiling_by_task_type() {
-    assert_eq!(tool_ceiling_for_task_type("scout"), "explore");
+    assert_eq!(tool_ceiling_for_task_type("scout"), "general-purpose");
     for t in ["debug", "implement", "design", "review"] {
         assert_eq!(tool_ceiling_for_task_type(t), "general-purpose");
     }
     let cfg = starter();
-    assert_eq!(cfg.tool_ceiling("scout"), "explore");
+    assert_eq!(cfg.tool_ceiling("scout"), "general-purpose");
     assert_eq!(cfg.tool_ceiling("implement"), "general-purpose");
+
+    let mut stale = starter();
+    stale.tool_ceiling.insert("scout".into(), "explore".into());
+    assert_eq!(stale.tool_ceiling("scout"), "general-purpose");
+}
+
+#[test]
+fn provider_fallback_uses_one_model_per_distinct_remaining_provider() {
+    let cfg = starter();
+    let fallback =
+        cfg.provider_fallback_models(Some("gemini-3.1-flash-lite"), "scout", "medium", false);
+    let providers: Vec<_> = fallback
+        .iter()
+        .map(|(provider, _)| provider.as_str())
+        .collect();
+    assert_eq!(providers, vec!["claude", "grok", "codex", "opencodego"]);
+    assert_eq!(
+        providers.len(),
+        providers
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    );
+}
+
+#[test]
+fn provider_fallback_respects_vision_and_omits_primary_provider() {
+    let cfg = starter();
+    let fallback = cfg.provider_fallback_models(Some("claude-opus-5"), "review", "high", true);
+    assert!(fallback.iter().all(|(provider, _)| provider != "claude"));
+    assert!(
+        fallback
+            .iter()
+            .all(|(_, model)| cfg.models[model].supports_vision)
+    );
+}
+
+#[test]
+fn configured_retry_plan_names_primary_provider_and_keeps_fallbacks_distinct() {
+    let cfg = starter();
+    let primary = overlay_subagent_router::provider_for_model(&cfg, "gemini-3.1-flash-lite");
+    let fallback =
+        cfg.provider_fallback_models(Some("gemini-3.1-flash-lite"), "scout", "medium", false);
+    assert_eq!(primary.as_deref(), Some("gemini"));
+    assert!(fallback.iter().all(|(provider, _)| provider != "gemini"));
+}
+
+#[test]
+fn retry_classifier_accepts_transient_provider_errors_only() {
+    for error in [
+        "Rate limited: HTTP 429",
+        "resource exhausted",
+        "service unavailable",
+        "upstream connect error",
+        "{\"http_status\":503}",
+    ] {
+        assert!(
+            overlay_subagent_router::is_retryable_provider_failure(error),
+            "expected retryable: {error}"
+        );
+    }
+    for error in [
+        "cwd does not exist",
+        "structured output validation failed",
+        "invalid model identifier",
+        "provider configuration is invalid",
+        "permission denied",
+    ] {
+        assert!(
+            !overlay_subagent_router::is_retryable_provider_failure(error),
+            "expected deterministic: {error}"
+        );
+    }
+}
+
+#[test]
+fn retry_state_machine_consumes_one_provider_and_stops_on_deterministic_error() {
+    let mut fallbacks = vec![
+        ("claude".to_string(), "claude-sonnet-5".to_string()),
+        ("codex".to_string(), "gpt-5.6-terra".to_string()),
+    ];
+    assert_eq!(
+        next_provider_retry("Rate limited: HTTP 429", &mut fallbacks),
+        ProviderRetryDecision::Retry {
+            provider: "claude".to_string(),
+            model: "claude-sonnet-5".to_string(),
+        }
+    );
+    assert_eq!(fallbacks.len(), 1);
+    assert_eq!(
+        next_provider_retry("cwd does not exist", &mut fallbacks),
+        ProviderRetryDecision::Stop
+    );
+    assert_eq!(fallbacks.len(), 1);
+}
+
+#[test]
+fn exhausted_provider_retry_names_every_attempted_provider() {
+    let providers = vec![
+        "gemini".to_string(),
+        "claude".to_string(),
+        "codex".to_string(),
+    ];
+    let error = provider_retry_exhausted_error("service unavailable", &providers);
+    assert!(error.contains("gemini, claude, codex"));
+    assert!(error.contains("service unavailable"));
 }
 
 #[test]

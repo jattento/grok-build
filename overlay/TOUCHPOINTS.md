@@ -45,13 +45,51 @@ Template for new entries:
 
 ### `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs`
 
-- What: `resolve_subagent_route` at the start of `TaskTool::run`; applies
-  router model, effort, and tool ceiling (`subagent_type`) before validation
-  and `SubagentRequest` build.
+- What: `resolve_subagent_route` at the start of `TaskTool::run` applies router
+  model, effort, unrestricted tool ceiling, and the provider-distinct fallback
+  model list before validation and request build.
 - Why here: this is the single model-facing spawn entry for the `task` tool;
   resolution in shell alone would miss inputs only present on the tool args.
 - Retire when: upstream exposes a spawn-time routing hook with equivalent
   fields.
+
+### `crates/codegen/xai-grok-shell/Cargo.toml`
+
+- What: path dependency on `overlay-subagent-router`.
+- Why here: the live child session owns retrying a failed model turn without
+  creating a second subagent/session identity.
+- Retire when: upstream exposes a provider-fallback hook inside child sampling.
+
+### `crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs`
+
+- What: retry a provider-classified failed first turn on one representative
+  model from each remaining configured provider, rewinding the failed prompt,
+  switching the existing child session in place, and stopping at first success.
+- Why here: this is the only boundary that sees the real provider sampling
+  error while still owning the existing child identity and prompt lifecycle.
+- Retire when: upstream supports provider-distinct failover for subagent turns.
+
+### `crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs`
+
+- What: exposes the existing model-override resolver within the crate so the
+  retry path can resolve each configured fallback model safely.
+- Why here: the resolver depends on shell-private model/auth state.
+- Retire when: same as the child retry touchpoint above.
+
+### `crates/codegen/xai-grok-subagent-resolution/src/overrides.rs`
+
+- What: initializes the new internal provider fallback list in a test helper.
+- Why here: the helper constructs `SubagentRuntimeOverrides` explicitly instead
+  of using `Default`.
+- Retire when: the fallback field no longer lives on that shared runtime type.
+
+### `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs`
+
+- What: adds the internal primary-provider label and provider-distinct fallback
+  model list to `SubagentRuntimeOverrides`.
+- Why here: this plain request type is the existing handoff from TaskTool routing
+  to the shell child runner.
+- Retire when: upstream exposes equivalent retry metadata.
 
 ### `crates/codegen/xai-grok-pager-bin/Cargo.toml`
 

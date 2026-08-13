@@ -6,6 +6,7 @@
 mod auth_bridge;
 mod config;
 mod decision;
+mod fallback;
 mod notify;
 mod sensor;
 mod windows;
@@ -19,6 +20,10 @@ pub use config::{
 pub use decision::{
     NotifyKind, ProviderUsageSnapshot, RouteDecision, RouteInput, RouteSource, UsageWindowSnap,
     WindowClass, decide_route, tool_ceiling_for_task_type,
+};
+pub use fallback::{
+    ProviderRetryDecision, configured_provider_retry_plan, is_retryable_provider_failure,
+    next_provider_retry, provider_for_model, provider_retry_exhausted_error,
 };
 pub use notify::{
     Notifier, OsascriptNotifier, SpyNotifier, notify_override, notify_provider_error,

@@ -187,8 +187,44 @@ impl RouterConfig {
     pub fn tool_ceiling(&self, task_type: &str) -> &str {
         self.tool_ceiling
             .get(task_type)
-            .map(|s| s.as_str())
+            .map(|_| "general-purpose")
             .unwrap_or_else(|| crate::decision::tool_ceiling_for_task_type(task_type))
+    }
+
+    pub fn provider_fallback_models(
+        &self,
+        primary_model: Option<&str>,
+        task_type: &str,
+        complexity: &str,
+        requires_vision: bool,
+    ) -> Vec<(String, String)> {
+        let primary_provider = primary_model
+            .and_then(|model| self.models.get(model))
+            .map(|meta| meta.provider.as_str());
+        let mut candidates: Vec<&String> = self
+            .route_cell(task_type, complexity)
+            .map(|cell| cell.models.iter().collect())
+            .unwrap_or_default();
+        let mut configured_models: Vec<&String> = self.models.keys().collect();
+        configured_models.sort();
+        candidates.extend(configured_models);
+
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for model in candidates {
+            let Some(meta) = self.models.get(model) else {
+                continue;
+            };
+            if primary_model == Some(model.as_str())
+                || primary_provider == Some(meta.provider.as_str())
+                || (requires_vision && !meta.supports_vision)
+                || !seen.insert(meta.provider.clone())
+            {
+                continue;
+            }
+            result.push((meta.provider.clone(), model.clone()));
+        }
+        result
     }
 }
 
