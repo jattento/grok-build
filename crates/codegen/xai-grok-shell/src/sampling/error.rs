@@ -104,10 +104,11 @@ pub const OVERLOADED_USER_MESSAGE: &str = "Model is temporarily overloaded. Try 
 /// This stays in xai-grok-shell because it depends on `agent_client_protocol::Error`.
 pub fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
     use reqwest::StatusCode;
-    // Capacity/overload gets the same short copy on every surface. Message
-    // only, `data` deliberately unset: `Display` appends JSON-encoded `data`,
-    // and this string is meant for direct display.
-    if err.is_overloaded() {
+    let retryable_provider_failure = err.is_retryable() && !err.is_retry_vetoed();
+    // Capacity/overload gets the same short copy on every surface. Preserve the
+    // structured retry marker for internal callers without exposing raw model
+    // output or relying on rendered-text substring matching.
+    if retryable_provider_failure && err.is_overloaded() {
         return acp::Error::new(
             acp::ErrorCode::InternalError.into(),
             OVERLOADED_USER_MESSAGE,
@@ -116,9 +117,11 @@ pub fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
     match err {
         SamplingError::Auth { message, .. } => acp::Error::auth_required().data(message),
         SamplingError::InvalidConfiguration(msg) => acp::Error::invalid_params().data(msg),
-        SamplingError::Http(e) => {
-            acp::Error::internal_error().data(format!("http client init failed: {e}"))
-        }
+        SamplingError::Http(e) => acp::Error::internal_error().data(provider_error_data(
+            format!("http client init failed: {e}"),
+            None,
+            retryable_provider_failure,
+        )),
         SamplingError::Serialization(_) => acp::Error::invalid_params().data(err.to_string()),
         SamplingError::Api {
             status, message, ..
@@ -150,25 +153,42 @@ pub fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
             StatusCode::NOT_FOUND => acp::Error::resource_not_found(None).data(message),
             StatusCode::PAYLOAD_TOO_LARGE => acp::Error::invalid_params().data(message),
             StatusCode::TOO_MANY_REQUESTS => {
-                acp::Error::new(RATE_LIMITED_ERROR_CODE, "Rate limited".to_string()).data(message)
+                acp::Error::new(RATE_LIMITED_ERROR_CODE, "Rate limited".to_string()).data(
+                    provider_error_data(message, Some(status.as_u16()), retryable_provider_failure),
+                )
             }
-            // Preserve the HTTP status in data so the classifier folds capacity
-            // errors (503/529) into `rate_limit`.
-            _ => acp::Error::internal_error()
-                .data(error_data_with_status(message, Some(status.as_u16()))),
+            // Preserve HTTP status plus canonical retryability for internal
+            // provider failover and downstream rate-limit classification.
+            _ => acp::Error::internal_error().data(provider_error_data(
+                message,
+                Some(status.as_u16()),
+                retryable_provider_failure,
+            )),
         },
-        SamplingError::EventStreamError(message) => acp::Error::internal_error().data(message),
+        SamplingError::EventStreamError(message) => acp::Error::internal_error().data(
+            provider_error_data(message, None, retryable_provider_failure),
+        ),
         SamplingError::StreamError {
             error_type,
             message,
-        } => acp::Error::internal_error().data(format!("{error_type}: {message}")),
-        SamplingError::EmptyResponse { context } => acp::Error::internal_error().data(format!(
-            "empty response from model ({}): model={}, had_reasoning={}, finish_reason={}",
-            context.reason,
-            context.model,
-            context.had_reasoning,
-            context.finish_reason_str(),
+        } => acp::Error::internal_error().data(provider_error_data(
+            format!("{error_type}: {message}"),
+            None,
+            retryable_provider_failure,
         )),
+        SamplingError::EmptyResponse { context } => {
+            acp::Error::internal_error().data(provider_error_data(
+                format!(
+                    "empty response from model ({}): model={}, had_reasoning={}, finish_reason={}",
+                    context.reason,
+                    context.model,
+                    context.had_reasoning,
+                    context.finish_reason_str(),
+                ),
+                None,
+                retryable_provider_failure,
+            ))
+        }
         SamplingError::MaxTokensTruncation => {
             acp::Error::internal_error().data(terminal_error_data(
                 err.to_string(),
@@ -192,6 +212,56 @@ pub fn error_data_with_status(message: String, http_status: Option<u16>) -> serd
         Some(sc) => serde_json::json!({ "message": message, "http_status": sc }),
         None => serde_json::Value::String(message),
     }
+}
+
+fn provider_error_data(
+    message: String,
+    http_status: Option<u16>,
+    retryable_provider_failure: bool,
+) -> serde_json::Value {
+    let mut data = serde_json::json!({
+        "message": message,
+        "retryable_provider_failure": retryable_provider_failure,
+    });
+    if let Some(status) = http_status {
+        data["http_status"] = serde_json::json!(status);
+    }
+    data
+}
+
+pub fn with_retryable_provider_failure(
+    mut err: acp::Error,
+    retryable_provider_failure: bool,
+) -> acp::Error {
+    let data = match err.data.take() {
+        Some(serde_json::Value::Object(mut data)) => {
+            data.insert(
+                "retryable_provider_failure".to_string(),
+                retryable_provider_failure.into(),
+            );
+            serde_json::Value::Object(data)
+        }
+        Some(serde_json::Value::String(message)) => {
+            provider_error_data(message, None, retryable_provider_failure)
+        }
+        Some(data) => serde_json::json!({
+            "detail": data,
+            "retryable_provider_failure": retryable_provider_failure,
+        }),
+        None => provider_error_data(err.message.clone(), None, retryable_provider_failure),
+    };
+    err.data = Some(data);
+    err
+}
+
+pub fn is_retryable_provider_failure(err: &acp::Error) -> bool {
+    err.message == OVERLOADED_USER_MESSAGE
+        || err
+            .data
+            .as_ref()
+            .and_then(|data| data.get("retryable_provider_failure"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
 }
 
 /// Terminal-failure `acp::Error.data`: max-tokens truncation carries an `error_kind` marker (the kind's stable `as_str` name); other kinds keep the legacy shape.
@@ -503,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn overload_maps_to_display_message_without_data() {
+    fn overload_maps_to_display_message_and_remains_retryable() {
         let err = SamplingError::StreamError {
             error_type: "overloaded_error".into(),
             message: "Overloaded".into(),
@@ -511,9 +581,8 @@ mod tests {
         let acp_err = map_sampling_err_to_acp(err);
         assert_eq!(acp_err.code, acp::ErrorCode::InternalError);
         assert_eq!(acp_err.message, OVERLOADED_USER_MESSAGE);
-        // Display appends JSON-encoded `data`; direct-display copy must not
-        // carry any.
         assert_eq!(acp_err.data, None);
+        assert!(is_retryable_provider_failure(&acp_err));
 
         let err_529 = SamplingError::Api {
             status: StatusCode::from_u16(529).expect("valid status"),
@@ -525,6 +594,7 @@ mod tests {
         let acp_529 = map_sampling_err_to_acp(err_529);
         assert_eq!(acp_529.message, OVERLOADED_USER_MESSAGE);
         assert_eq!(acp_529.data, None);
+        assert!(is_retryable_provider_failure(&acp_529));
     }
 
     #[test]
@@ -540,9 +610,70 @@ mod tests {
         assert_eq!(acp_err.code, acp::ErrorCode::from(RATE_LIMITED_ERROR_CODE));
         assert_eq!(acp_err.message, "Rate limited");
         assert_eq!(
-            acp_err.data,
-            Some(serde_json::Value::String("Rate limit exceeded".into()))
+            error_detail_from_data(acp_err.data.as_ref().expect("rate-limit data")).as_deref(),
+            Some("Rate limit exceeded")
         );
+        assert!(is_retryable_provider_failure(&acp_err));
+    }
+
+    #[test]
+    fn retry_marker_helper_preserves_existing_error_data() {
+        let marked = with_retryable_provider_failure(
+            acp::Error::internal_error().data(error_data_with_status(
+                "upstream unavailable".into(),
+                Some(503),
+            )),
+            true,
+        );
+        assert!(is_retryable_provider_failure(&marked));
+        assert_eq!(http_status_from_error(&marked), Some(503));
+        assert_eq!(
+            error_detail_from_data(marked.data.as_ref().expect("marked data")).as_deref(),
+            Some("upstream unavailable")
+        );
+
+        let unmarked = acp::Error::internal_error().data("timeout");
+        assert!(!is_retryable_provider_failure(&unmarked));
+    }
+
+    #[test]
+    fn provider_retry_marker_respects_deterministic_vetoes() {
+        let idle = map_sampling_err_to_acp(SamplingError::IdleTimeout { elapsed_secs: 30 });
+        assert!(!is_retryable_provider_failure(&idle));
+
+        let header_veto = map_sampling_err_to_acp(SamplingError::Api {
+            status: StatusCode::from_u16(529).expect("valid status"),
+            message: "capacity".into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: Some(false),
+        });
+        assert!(!is_retryable_provider_failure(&header_veto));
+
+        let context_veto = map_sampling_err_to_acp(SamplingError::Api {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "The prompt is too long for this model's context window.".into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+        });
+        assert!(!is_retryable_provider_failure(&context_veto));
+
+        let empty = map_sampling_err_to_acp(SamplingError::EmptyResponse {
+            context: xai_grok_sampling_types::EmptyResponseContext {
+                reason: xai_grok_sampling_types::EmptyReason::NoVisibleContent,
+                had_reasoning: false,
+                content_len: 0,
+                tool_call_count: 0,
+                finish_reason: None,
+                completion_tokens: None,
+                reasoning_tokens: None,
+                prompt_tokens: None,
+                model: "test".into(),
+                first_choice_seen: false,
+            },
+        });
+        assert!(is_retryable_provider_failure(&empty));
     }
 
     #[test]

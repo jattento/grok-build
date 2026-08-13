@@ -1257,21 +1257,29 @@ pub(crate) async fn run_shell_child(
         .into_iter()
         .collect();
     let mut failed_prompt_needs_rewind = true;
+    let mut provider_retries_exhausted = false;
+    let mut fallback_setup_failed = false;
     while let SubagentWaitOutcome::TurnResult(turn_result) = &wait_outcome {
         let error = match turn_result.as_ref() {
-            Ok(Err(error)) if !cancel_token.is_cancelled() => error.to_string(),
+            Ok(Err(error)) if !cancel_token.is_cancelled() => error,
             _ => break,
         };
-        let overlay_subagent_router::ProviderRetryDecision::Retry { provider, model } =
-            overlay_subagent_router::next_provider_retry(
-                &error,
-                &mut request.runtime_overrides.provider_fallback_models,
-            )
-        else {
-            break;
+        let (provider, model) = match overlay_subagent_router::next_provider_retry(
+            crate::sampling::error::is_retryable_provider_failure(error),
+            &mut request.runtime_overrides.provider_fallback_models,
+        ) {
+            overlay_subagent_router::ProviderRetryDecision::Stop => break,
+            overlay_subagent_router::ProviderRetryDecision::Exhausted => {
+                provider_retries_exhausted = !fallback_setup_failed;
+                break;
+            }
+            overlay_subagent_router::ProviderRetryDecision::Retry { provider, model } => {
+                (provider, model)
+            }
         };
         let Some((sampling_config, model_id)) = resolve_model_override_to_config(&model, &ctx)
         else {
+            fallback_setup_failed = true;
             tracing::warn!(provider = %provider, model = %model, "provider fallback model is unavailable");
             continue;
         };
@@ -1331,6 +1339,7 @@ pub(crate) async fn run_shell_child(
                 failed_prompt_needs_rewind = true;
             }
             Ok(Err(model_error)) => {
+                fallback_setup_failed = true;
                 tracing::warn!(provider = %provider, model = %model, error = %model_error, "provider fallback model switch failed");
             }
             Err(_) => break,
@@ -1504,9 +1513,10 @@ pub(crate) async fn run_shell_child(
                         error: Some(if was_cancelled {
                             "Subagent was cancelled".to_string()
                         } else {
-                            overlay_subagent_router::provider_retry_exhausted_error(
+                            overlay_subagent_router::provider_retry_error(
                                 &e.to_string(),
                                 &attempted_providers,
+                                provider_retries_exhausted,
                             )
                         }),
                         subagent_id: request.id.clone(),

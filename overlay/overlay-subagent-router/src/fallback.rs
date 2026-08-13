@@ -1,64 +1,32 @@
 use crate::RouterConfig;
 
-pub const RETRYABLE_PROVIDER_ERROR_NEEDLES: &[&str] = &[
-    "rate limit",
-    "rate_limit",
-    "too many requests",
-    "429",
-    "quota exceeded",
-    "resource exhausted",
-    "overloaded",
-    "provider unavailable",
-    "service unavailable",
-    "temporarily unavailable",
-    "bad gateway",
-    "gateway timeout",
-    "upstream connect",
-    "upstream reset",
-    "upstream timeout",
-    "connection reset",
-    "connection refused",
-    "network error",
-    "timed out",
-    "timeout",
-    "http status 500",
-    "http_status\":500",
-    "http status 502",
-    "http_status\":502",
-    "http status 503",
-    "http_status\":503",
-    "http status 504",
-    "http_status\":504",
-    "http status 529",
-    "http_status\":529",
-];
-
-pub fn is_retryable_provider_failure(error: &str) -> bool {
-    let lower = error.to_ascii_lowercase();
-    RETRYABLE_PROVIDER_ERROR_NEEDLES
-        .iter()
-        .any(|needle| lower.contains(needle))
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderRetryDecision {
     Stop,
+    Exhausted,
     Retry { provider: String, model: String },
 }
 
 pub fn next_provider_retry(
-    error: &str,
+    retryable_provider_failure: bool,
     fallbacks: &mut Vec<(String, String)>,
 ) -> ProviderRetryDecision {
-    if !is_retryable_provider_failure(error) || fallbacks.is_empty() {
+    if !retryable_provider_failure {
         return ProviderRetryDecision::Stop;
+    }
+    if fallbacks.is_empty() {
+        return ProviderRetryDecision::Exhausted;
     }
     let (provider, model) = fallbacks.remove(0);
     ProviderRetryDecision::Retry { provider, model }
 }
 
-pub fn provider_retry_exhausted_error(error: &str, attempted_providers: &[String]) -> String {
-    if attempted_providers.is_empty() {
+pub fn provider_retry_error(
+    error: &str,
+    attempted_providers: &[String],
+    exhausted: bool,
+) -> String {
+    if !exhausted || attempted_providers.is_empty() {
         return format!("Session error: {error}");
     }
     format!(

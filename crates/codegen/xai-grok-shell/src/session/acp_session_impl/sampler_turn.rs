@@ -1176,8 +1176,15 @@ impl SessionActor {
             }
             Err(rich_err) => {
                 self.turn_stream_drained.lock().take();
+                let retryable_provider_failure =
+                    rich_err.is_retryable() && !rich_err.is_retry_vetoed();
                 let info = xai_grok_sampler::SamplingErrorInfo::from(&rich_err);
-                match self.handle_sampling_failure(info).await? {
+                match self.handle_sampling_failure(info).await.map_err(|error| {
+                    crate::sampling::error::with_retryable_provider_failure(
+                        error,
+                        retryable_provider_failure,
+                    )
+                })? {
                     SamplerFailureRecovery::CompactAndResubmit => {
                         Ok(SamplerTurnOutcome::CompactAndResubmit)
                     }
