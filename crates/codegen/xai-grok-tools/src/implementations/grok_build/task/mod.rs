@@ -486,6 +486,17 @@ impl xai_tool_runtime::Tool for TaskTool {
             model_provenance = ModelOverrideProvenance::Tool;
         }
         let model = routed_model;
+        let (primary_provider, provider_fallback_models) =
+            if resume_from.is_none() && !had_tool_model_override && input.task_type.is_some() {
+                overlay_subagent_router::configured_provider_retry_plan(
+                    model.as_deref(),
+                    input.task_type.as_deref().unwrap_or("implement"),
+                    input.complexity.as_deref().unwrap_or("medium"),
+                    input.requires_vision,
+                )
+            } else {
+                (None, vec![])
+            };
         // Prefer router-derived type when task_type was provided.
         let effective_subagent_type =
             routed_subagent_type.unwrap_or_else(|| input.subagent_type.clone());
@@ -624,6 +635,8 @@ impl xai_tool_runtime::Tool for TaskTool {
                 model,
                 model_override_provenance: model_provenance,
                 reasoning_effort: routed_effort,
+                primary_provider,
+                provider_fallback_models,
                 persona: None,
                 // JSON cannot set this field. Compat-harness adapters still
                 // populate it in-process; model-facing spawns stay `None`.
