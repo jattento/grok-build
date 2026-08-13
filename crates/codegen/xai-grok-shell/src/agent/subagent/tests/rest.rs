@@ -1603,6 +1603,26 @@ fn resume_identity_does_not_gate_on_model() {
         );
 }
 #[test]
+fn effective_model_update_persists_fallback_for_durable_resume() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut meta = snapshot_test_meta("sa-model-update");
+    meta.status = "completed".into();
+    meta.effective_model_id = Some("primary-model".into());
+    assert!(write_subagent_meta(dir.path(), &meta));
+    assert!(update_subagent_meta_effective_model(
+        dir.path(),
+        "fallback-model"
+    ));
+
+    let data = std::fs::read_to_string(dir.path().join("meta.json")).unwrap();
+    let loaded: SubagentMeta = serde_json::from_str(&data).unwrap();
+    assert_eq!(
+        loaded.effective_model_id.as_deref(),
+        Some("fallback-model")
+    );
+}
+
+#[test]
 fn durable_meta_roundtrips_effective_model_id() {
     let dir = std::env::temp_dir()
         .join("grok-test-model-roundtrip")

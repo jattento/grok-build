@@ -2645,12 +2645,7 @@ impl SessionActor {
                 arguments_delta,
                 ..
             } => {
-                {
-                    let mut cap = self.streaming_turn_capture.lock();
-                    if cap.prompt_id.is_some() {
-                        cap.phase = CapturePhase::ToolCall;
-                    }
-                }
+                self.streaming_turn_capture.lock().mark_tool_call();
                 self.send_buffered_xai_update(XaiSessionUpdate::ToolCallDeltaChunk {
                     tool_call_id: id,
                     tool_index,
@@ -2771,6 +2766,9 @@ impl SessionActor {
                 .await;
             }
             SamplingEvent::Failed { request_id, error } => {
+                if let Some(tx) = self.turn_stream_drained.lock().take() {
+                    let _ = tx.send(());
+                }
                 xai_grok_telemetry::unified_log::error(
                     "shell.turn.inference_failed",
                     Some(self.session_info.id.0.as_ref()),
@@ -2796,6 +2794,7 @@ impl SessionActor {
                 }
             }
             SamplingEvent::BackendToolCallStarted { call_id, name, .. } => {
+                self.streaming_turn_capture.lock().mark_tool_call();
                 self.signals_handle().record_tool_call(&name);
                 let (title, kind, raw_input) = backend_tool_display(&name);
                 self.send_update(

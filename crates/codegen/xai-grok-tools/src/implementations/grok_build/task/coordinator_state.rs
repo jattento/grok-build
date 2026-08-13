@@ -189,6 +189,24 @@ impl<C: 'static> ChildReporter<C> {
         response_rx.await.unwrap_or(false)
     }
 
+    /// Update the model identity retained for completion and `resume_from`
+    /// after an in-place provider fallback switches the live child session.
+    pub async fn effective_model_changed(&self, effective_model_id: String) -> bool {
+        let (respond_to, response_rx) = oneshot::channel();
+        if self
+            .tx
+            .send(InternalEvent::EffectiveModelChanged {
+                subagent_id: self.subagent_id.clone(),
+                effective_model_id,
+                respond_to,
+            })
+            .is_err()
+        {
+            return false;
+        }
+        response_rx.await.unwrap_or(false)
+    }
+
     /// Resolve an in-memory resume source without sharing coordinator state.
     pub async fn resume_source(
         &self,
@@ -215,6 +233,11 @@ pub(super) enum InternalEvent<C> {
     Started {
         subagent_id: String,
         child: StartedChild<C>,
+        respond_to: oneshot::Sender<bool>,
+    },
+    EffectiveModelChanged {
+        subagent_id: String,
+        effective_model_id: String,
         respond_to: oneshot::Sender<bool>,
     },
     ResumeSource {

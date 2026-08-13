@@ -593,7 +593,7 @@ pub(crate) async fn run_shell_child(
             upload_subagent_metadata(&gcs_meta, &bucket, method, auth_for_spawn).await;
         });
     }
-    let gcs_upload_ctx = GcsUploadContext {
+    let mut gcs_upload_ctx = GcsUploadContext {
         bucket_url: ctx.gcs_bucket_url.clone(),
         upload_method: ctx.gcs_upload_method.clone(),
         model_id: Some(effective_model_id.0.to_string()),
@@ -717,14 +717,19 @@ pub(crate) async fn run_shell_child(
         .output_token_budget
         .map(crate::tools::tool_context::TaskOutputTokenBudget::limited);
     tool_ctx.task_output_token_budget = task_output_budget.clone();
-    tool_ctx.sampler_retry_only_before_output = task_output_budget.is_some();
+    tool_ctx.sampler_retry_only_before_output = task_output_budget.is_some()
+        || !request
+            .runtime_overrides
+            .provider_fallback_models
+            .is_empty();
     tool_ctx.monitor_event_buffer = Some(MonitorEventBuffer::default());
     tool_ctx.subagent_depth = child_depth;
     tool_ctx.lsp = ctx.lsp.clone();
     tool_ctx.process_scope = ctx.process_scope.clone();
     let parent_traceparent = xai_file_utils::trace_context::current_traceparent();
     let tracker_child_cwd = child_session_info.cwd.clone();
-    let tracker_model_id = effective_model_id.0.to_string();
+    let mut tracker_model_id = effective_model_id.0.to_string();
+    let mut active_model_id = tracker_model_id.clone();
     let initial_child_tokens = xai_chat_state::estimate_conversation_tokens(&forked_conversation);
     let model_entry = crate::agent::config::find_model_by_id(
         &ctx.available_models,
@@ -1248,6 +1253,7 @@ pub(crate) async fn run_shell_child(
         });
         prompt_rx
     };
+    let initial_tool_call_count = signals_snapshot_counts(&child_handle).await.0;
     let mut wait_outcome =
         await_subagent_turn_or_cancellation(run_prompt(), cancel_token.clone()).await;
     let mut attempted_providers: Vec<String> = request
@@ -1264,8 +1270,10 @@ pub(crate) async fn run_shell_child(
             Ok(Err(error)) if !cancel_token.is_cancelled() => error,
             _ => break,
         };
+        let current_tool_call_count = signals_snapshot_counts(&child_handle).await.0;
+        let safe_to_replay = current_tool_call_count == initial_tool_call_count;
         let (provider, model) = match overlay_subagent_router::next_provider_retry(
-            crate::sampling::error::is_retryable_provider_failure(error),
+            safe_to_replay && crate::sampling::error::is_retryable_provider_failure(error),
             &mut request.runtime_overrides.provider_fallback_models,
         ) {
             overlay_subagent_router::ProviderRetryDecision::Stop => break,
@@ -1332,7 +1340,8 @@ pub(crate) async fn run_shell_child(
             break;
         }
         match model_rx.await {
-            Ok(Ok(_)) => {
+            Ok(Ok(switched_model_id)) => {
+                active_model_id = switched_model_id.0.to_string();
                 attempted_providers.push(provider);
                 wait_outcome =
                     await_subagent_turn_or_cancellation(run_prompt(), cancel_token.clone()).await;
@@ -1554,6 +1563,21 @@ pub(crate) async fn run_shell_child(
             }
         }
     };
+    if result.success {
+        tracker_model_id = active_model_id.clone();
+        gcs_upload_ctx.model_id = Some(active_model_id);
+        if !reporter
+            .effective_model_changed(tracker_model_id.clone())
+            .await
+        {
+            tracing::warn!(
+                subagent_id = %request.id,
+                effective_model = %tracker_model_id,
+                "completed subagent model identity was not updated in coordinator"
+            );
+        }
+        update_subagent_meta_effective_model(&subagent_meta_dir, &tracker_model_id);
+    }
     if let Some(trace_gcs_config) = gcs_upload_ctx.upload_method.as_ref().map(|method| {
         crate::session::repo_changes::TraceExportConfig {
             bucket_url: gcs_upload_ctx.bucket_url.clone(),

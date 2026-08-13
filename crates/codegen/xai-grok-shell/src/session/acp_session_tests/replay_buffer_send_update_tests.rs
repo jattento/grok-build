@@ -781,6 +781,8 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
                 .current_prompt_id
                 .lock()
                 .expect("current_prompt_id mutex poisoned") = Some("prompt-failed".to_string());
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            *actor.turn_stream_drained.lock() = Some(tx);
             let req = RequestId::random();
             actor
                 .handle_sampling_event(SamplingEvent::StreamStarted {
@@ -813,7 +815,12 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
                     },
                 })
                 .await;
+            assert!(
+                rx.await.is_ok(),
+                "Failed must release the stream-drain barrier after all partial chunks"
+            );
             let cap = actor.streaming_turn_capture.lock().clone();
+            assert!(cap.has_replay_risk());
             assert_eq!(
                 cap.reasoning_text, "I should consider...",
                 "Failed must NOT discard the accumulator — the trace \
@@ -1082,6 +1089,7 @@ async fn tool_call_delta_marks_streaming_capture_phase() {
                 "ToolCallDelta must re-label the active capture as the \
                      tool-call phase",
             );
+            assert!(cap.has_replay_risk());
             assert_eq!(
                 cap.reasoning_text, "I'll call a tool.",
                 "marking the tool-call phase must not discard the \
