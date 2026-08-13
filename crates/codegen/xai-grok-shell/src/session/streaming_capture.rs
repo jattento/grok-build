@@ -153,6 +153,23 @@ impl StreamingTurnCapture {
             && self.empty_reason.is_none()
     }
 
+    /// Whether replaying the whole prompt could duplicate already-streamed
+    /// output or a model-requested tool operation.
+    pub(crate) fn has_replay_risk(&self) -> bool {
+        !self.reasoning_text.is_empty()
+            || !self.response_text.is_empty()
+            || self.reasoning_chunks > 0
+            || self.text_chunks > 0
+            || !self.segments.is_empty()
+            || self.phase == CapturePhase::ToolCall
+    }
+
+    /// Mark a model-requested tool operation even when no argument delta was
+    /// retained in this capture.
+    pub(crate) fn mark_tool_call(&mut self) {
+        self.phase = CapturePhase::ToolCall;
+    }
+
     /// Reset the capture in-place and stamp the new turn's identifiers. Called
     /// from `StreamStarted` only when the prompt id changes (or from the first
     /// chunk if `StreamStarted` was dropped), so a same-turn restart — a
