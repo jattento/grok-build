@@ -3,7 +3,7 @@
 use overlay_subagent_router::{
     NotifyKind, ProviderRetryDecision, ProviderUsageSnapshot, RouteInput, RouteSource,
     RouterConfig, STARTER_TOML, SpyNotifier, UsageWindowSnap, decide_route, load_config_from_str,
-    next_provider_retry, notify_override, notify_provider_error, provider_retry_exhausted_error,
+    next_provider_retry, notify_override, notify_provider_error, provider_retry_error,
     tool_ceiling_for_task_type,
 };
 
@@ -77,41 +77,13 @@ fn configured_retry_plan_names_primary_provider_and_keeps_fallbacks_distinct() {
 }
 
 #[test]
-fn retry_classifier_accepts_transient_provider_errors_only() {
-    for error in [
-        "Rate limited: HTTP 429",
-        "resource exhausted",
-        "service unavailable",
-        "upstream connect error",
-        "{\"http_status\":503}",
-    ] {
-        assert!(
-            overlay_subagent_router::is_retryable_provider_failure(error),
-            "expected retryable: {error}"
-        );
-    }
-    for error in [
-        "cwd does not exist",
-        "structured output validation failed",
-        "invalid model identifier",
-        "provider configuration is invalid",
-        "permission denied",
-    ] {
-        assert!(
-            !overlay_subagent_router::is_retryable_provider_failure(error),
-            "expected deterministic: {error}"
-        );
-    }
-}
-
-#[test]
-fn retry_state_machine_consumes_one_provider_and_stops_on_deterministic_error() {
+fn retry_state_machine_consumes_one_provider_and_distinguishes_stop_from_exhaustion() {
     let mut fallbacks = vec![
         ("claude".to_string(), "claude-sonnet-5".to_string()),
         ("codex".to_string(), "gpt-5.6-terra".to_string()),
     ];
     assert_eq!(
-        next_provider_retry("Rate limited: HTTP 429", &mut fallbacks),
+        next_provider_retry(true, &mut fallbacks),
         ProviderRetryDecision::Retry {
             provider: "claude".to_string(),
             model: "claude-sonnet-5".to_string(),
@@ -119,22 +91,31 @@ fn retry_state_machine_consumes_one_provider_and_stops_on_deterministic_error() 
     );
     assert_eq!(fallbacks.len(), 1);
     assert_eq!(
-        next_provider_retry("cwd does not exist", &mut fallbacks),
+        next_provider_retry(false, &mut fallbacks),
         ProviderRetryDecision::Stop
     );
     assert_eq!(fallbacks.len(), 1);
+    fallbacks.clear();
+    assert_eq!(
+        next_provider_retry(true, &mut fallbacks),
+        ProviderRetryDecision::Exhausted
+    );
 }
 
 #[test]
-fn exhausted_provider_retry_names_every_attempted_provider() {
+fn provider_names_are_reported_only_after_true_exhaustion() {
     let providers = vec![
         "gemini".to_string(),
         "claude".to_string(),
         "codex".to_string(),
     ];
-    let error = provider_retry_exhausted_error("service unavailable", &providers);
-    assert!(error.contains("gemini, claude, codex"));
-    assert!(error.contains("service unavailable"));
+    let exhausted = provider_retry_error("service unavailable", &providers, true);
+    assert!(exhausted.contains("gemini, claude, codex"));
+    assert!(exhausted.contains("service unavailable"));
+
+    let deterministic = provider_retry_error("cwd does not exist", &providers, false);
+    assert_eq!(deterministic, "Session error: cwd does not exist");
+    assert!(!deterministic.contains("providers"));
 }
 
 #[test]

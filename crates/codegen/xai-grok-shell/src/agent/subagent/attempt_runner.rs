@@ -217,9 +217,7 @@ pub(super) async fn run_one_turn_attempt(
                 Ok(Err(error)) => {
                     cancellation_may_hide_usage = was_cancelled;
                     retryable_provider_failure = !was_cancelled
-                        && overlay_subagent_router::is_retryable_provider_failure(
-                            &error.to_string(),
-                        );
+                        && crate::sampling::error::is_retryable_provider_failure(&error);
                     SubagentResult {
                         success: false,
                         cancelled: was_cancelled,

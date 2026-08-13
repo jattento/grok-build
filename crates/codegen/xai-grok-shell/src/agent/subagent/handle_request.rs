@@ -1176,6 +1176,8 @@ pub(crate) async fn run_shell_child(
         .into_iter()
         .collect();
     let mut next_attempt_inherited_tool_overrides = ctx.inherited_tool_overrides.clone();
+    let mut provider_retries_exhausted = false;
+    let mut fallback_setup_failed = false;
     let attempt = loop {
         let attempt = run_one_turn_attempt(OneTurnAttemptInput {
             child_handle: &child_handle,
@@ -1190,20 +1192,22 @@ pub(crate) async fn run_shell_child(
         })
         .await;
         let retry_error = attempt.result.error.clone().unwrap_or_default();
-        let overlay_subagent_router::ProviderRetryDecision::Retry { provider, model } =
-            overlay_subagent_router::next_provider_retry(
-                if attempt.retryable_provider_failure {
-                    &retry_error
-                } else {
-                    ""
-                },
-                &mut request.runtime_overrides.provider_fallback_models,
-            )
-        else {
-            break attempt;
+        let (provider, model) = match overlay_subagent_router::next_provider_retry(
+            attempt.retryable_provider_failure,
+            &mut request.runtime_overrides.provider_fallback_models,
+        ) {
+            overlay_subagent_router::ProviderRetryDecision::Stop => break attempt,
+            overlay_subagent_router::ProviderRetryDecision::Exhausted => {
+                provider_retries_exhausted = !fallback_setup_failed;
+                break attempt;
+            }
+            overlay_subagent_router::ProviderRetryDecision::Retry { provider, model } => {
+                (provider, model)
+            }
         };
         let Some((sampling_config, model_id)) = resolve_model_override_to_config(&model, &ctx)
         else {
+            fallback_setup_failed = true;
             tracing::warn!(provider = %provider, model = %model, "provider fallback model is unavailable");
             continue;
         };
@@ -1254,6 +1258,7 @@ pub(crate) async fn run_shell_child(
         match model_rx.await {
             Ok(Ok(_)) => attempted_providers.push(provider),
             Ok(Err(model_error)) => {
+                fallback_setup_failed = true;
                 tracing::warn!(provider = %provider, model = %model, error = %model_error, "provider fallback model switch failed");
             }
             Err(_) => break attempt,
@@ -1267,9 +1272,10 @@ pub(crate) async fn run_shell_child(
     } = attempt;
     if !result.success && !result.cancelled {
         let error = result.error.clone().unwrap_or_default();
-        result.error = Some(overlay_subagent_router::provider_retry_exhausted_error(
+        result.error = Some(overlay_subagent_router::provider_retry_error(
             &error,
             &attempted_providers,
+            provider_retries_exhausted,
         ));
     }
     let OneTurnTraceCapture {
