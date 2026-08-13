@@ -236,6 +236,8 @@ mod tests {
             model: model.map(String::from),
             model_override_provenance: ModelOverrideProvenance::Harness,
             reasoning_effort: reasoning_effort.map(String::from),
+            primary_provider: None,
+            provider_fallback_models: vec![],
             persona: persona.map(String::from),
             capability_mode,
             isolation,

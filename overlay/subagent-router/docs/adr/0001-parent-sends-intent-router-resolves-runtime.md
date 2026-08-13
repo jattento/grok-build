@@ -14,5 +14,7 @@ The parent-facing spawn contract exposes `task_type` and `complexity` (plus prom
 ## Consequences
 
 - Plan-as-subagent is out of scope: planning stays on the main agent.
+- Every routed child uses the unrestricted `general-purpose` runtime. `scout`
+  remains a cognitive intent and model/effort route, not a reduced toolset.
 - Upstream `TaskToolInput` shape (or an overlay-shaped view of it) must change or be adapted at the spawn boundary.
 - Override policy is soft (tool description) unless we later gate on prior failed `task` ids; when `model` is present it wins over the router (no fit/quota veto) and a macOS notification is mandatory.

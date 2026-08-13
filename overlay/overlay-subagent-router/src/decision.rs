@@ -75,12 +75,8 @@ impl ProviderUsageSnapshot {
 }
 
 /// Default tool ceiling when config omits the task type.
-pub fn tool_ceiling_for_task_type(task_type: &str) -> &'static str {
-    match task_type {
-        "scout" => "explore",
-        "debug" | "implement" | "design" | "review" => "general-purpose",
-        _ => "general-purpose",
-    }
+pub fn tool_ceiling_for_task_type(_task_type: &str) -> &'static str {
+    "general-purpose"
 }
 
 /// Pure decision given config + usage snapshot (no I/O).

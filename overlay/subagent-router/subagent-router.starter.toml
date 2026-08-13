@@ -69,12 +69,12 @@ rank_primary = "weekly"
 rank_secondary = "session"
 
 # ── Tool ceiling (derived from task_type; parent does not pick this) ─────────
-# scout → explore (read/search/shell, no edits)
-# everything else → general-purpose
+# Every child uses the unrestricted general-purpose runtime. Task type still
+# selects the model, effort, and persona intent; it no longer removes tools.
 # Plan stays on the parent agent — not a child task type.
 
 [tool_ceiling]
-scout      = "explore"
+scout      = "general-purpose"
 debug      = "general-purpose"
 implement  = "general-purpose"
 design     = "general-purpose"
@@ -233,7 +233,7 @@ supports_vision = true
 #   mid    = sonnet, terra, grok-4.5, gemini-pro, qwen-plus, minimax-m3, glm
 #   top    = opus, fable, sol, grok-4.5, qwen-max
 
-# ── scout (tool ceiling: explore) ────────────────────────────────────────────
+# ── scout (tool ceiling: unrestricted) ────────────────────────────────────────────
 
 [routes.scout.low]
 models = [

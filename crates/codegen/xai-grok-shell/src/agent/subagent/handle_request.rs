@@ -1169,23 +1169,109 @@ pub(crate) async fn run_shell_child(
         cancel_token.clone(),
         goal_tick_cmd_tx(ctx.goal_enabled, ctx.parent_cmd_tx.as_ref()),
     );
-    let attempt = run_one_turn_attempt(OneTurnAttemptInput {
-        child_handle: &child_handle,
-        request: &request,
-        worktree_path: worktree_path.as_deref(),
-        task_prompt_text: &task_prompt_text,
-        inherited_tool_overrides: ctx.inherited_tool_overrides.clone(),
-        gcs_bucket_url: ctx.gcs_bucket_url.as_deref(),
-        gcs_upload_method: ctx.gcs_upload_method.as_ref(),
-        cancel_token: cancel_token.clone(),
-        child_run_started_at: start,
-    })
-    .await;
+    let mut attempted_providers: Vec<String> = request
+        .runtime_overrides
+        .primary_provider
+        .clone()
+        .into_iter()
+        .collect();
+    let mut next_attempt_inherited_tool_overrides = ctx.inherited_tool_overrides.clone();
+    let attempt = loop {
+        let attempt = run_one_turn_attempt(OneTurnAttemptInput {
+            child_handle: &child_handle,
+            request: &request,
+            worktree_path: worktree_path.as_deref(),
+            task_prompt_text: &task_prompt_text,
+            inherited_tool_overrides: next_attempt_inherited_tool_overrides.take(),
+            gcs_bucket_url: ctx.gcs_bucket_url.as_deref(),
+            gcs_upload_method: ctx.gcs_upload_method.as_ref(),
+            cancel_token: cancel_token.clone(),
+            child_run_started_at: start,
+        })
+        .await;
+        let retry_error = attempt.result.error.clone().unwrap_or_default();
+        let overlay_subagent_router::ProviderRetryDecision::Retry { provider, model } =
+            overlay_subagent_router::next_provider_retry(
+                if attempt.retryable_provider_failure {
+                    &retry_error
+                } else {
+                    ""
+                },
+                &mut request.runtime_overrides.provider_fallback_models,
+            )
+        else {
+            break attempt;
+        };
+        let Some((sampling_config, model_id)) = resolve_model_override_to_config(&model, &ctx)
+        else {
+            tracing::warn!(provider = %provider, model = %model, "provider fallback model is unavailable");
+            continue;
+        };
+        let (rewind_tx, rewind_rx) = oneshot::channel();
+        if child_handle
+            .cmd_tx
+            .send(SessionCommand::Rewind {
+                request: crate::session::acp_types::RewindRequest {
+                    target_prompt_index: 0,
+                    force: true,
+                    mode: crate::session::acp_types::RewindMode::ConversationOnly,
+                },
+                respond_to: rewind_tx,
+            })
+            .is_err()
+        {
+            break attempt;
+        }
+        match rewind_rx.await {
+            Ok(Ok(response)) if response.success => {}
+            Ok(Ok(response)) => {
+                tracing::warn!(provider = %provider, model = %model, error = ?response.error, "provider fallback could not rewind failed prompt");
+                break attempt;
+            }
+            Ok(Err(rewind_error)) => {
+                tracing::warn!(provider = %provider, model = %model, error = %rewind_error, "provider fallback rewind failed");
+                break attempt;
+            }
+            Err(_) => break attempt,
+        }
+        tracing::warn!(provider = %provider, model = %model, error = %retry_error, "retrying subagent turn with another provider");
+        let (model_tx, model_rx) = oneshot::channel();
+        if child_handle
+            .cmd_tx
+            .send(SessionCommand::SetSessionModel {
+                sampling_config,
+                use_concise: false,
+                apply_prompt_override: false,
+                skip_prompt_rewrite: true,
+                auto_compact_threshold_percent: ctx
+                    .resolve_auto_compact_threshold_percent(model_id.0.as_ref()),
+                responds_to: model_tx,
+            })
+            .is_err()
+        {
+            break attempt;
+        }
+        match model_rx.await {
+            Ok(Ok(_)) => attempted_providers.push(provider),
+            Ok(Err(model_error)) => {
+                tracing::warn!(provider = %provider, model = %model, error = %model_error, "provider fallback model switch failed");
+            }
+            Err(_) => break attempt,
+        }
+    };
     let OneTurnAttemptOutcome {
         mut result,
         trace,
         cancellation_may_hide_usage,
+        retryable_provider_failure: _,
     } = attempt;
+    if !result.success && !result.cancelled {
+        let error = result.error.clone().unwrap_or_default();
+        result.error = Some(overlay_subagent_router::provider_retry_exhausted_error(
+            &error,
+            &attempted_providers,
+        ));
+    }
     let OneTurnTraceCapture {
         before_copy_rx,
         child_prompt_id,

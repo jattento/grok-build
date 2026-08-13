@@ -910,7 +910,7 @@ fn subagent_auth_type(
 }
 /// Resolve a model override string (config key or model ID) to a
 /// `(SamplerConfig, ModelId)` pair.
-fn resolve_model_override_to_config(
+pub(crate) fn resolve_model_override_to_config(
     model_id: &str,
     ctx: &SubagentSpawnContext,
 ) -> Option<(xai_grok_sampler::SamplerConfig, acp::ModelId)> {
