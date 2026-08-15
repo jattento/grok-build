@@ -186,6 +186,24 @@ Template for new entries:
   `cargo check -p xai-grok-pager-bin` to re-add our entries. Keeping
   `overlay-*` packages dependency-free keeps this diff to a few lines.
 
+### `crates/codegen/xai-grok-shell/src/agent/config.rs`
+
+- What: clamps `gpt-*` `context_window` to 372000, the usable Codex /
+  cliproxy budget. Config values like 1050000 overflow that route.
+- Why here: `resolve_model_list` is the last place every catalog entry
+  is assembled; config alone cannot cap a too-large user window.
+- Retire when: the GPT route accepts the advertised 1.05M window.
+
+### `crates/codegen/xai-grok-shell/src/session/compaction.rs`
+### `crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs`
+### `crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs`
+
+- What: compact-on-error also fires on context-length error text when the
+  response has no `x-grok-context-window` (GPT / cliproxy).
+- Why here: the session gate and its contract tests live in these files.
+- Retire when: upstream treats overflow wording as sufficient without the
+  xAI header.
+
 ### `crates/codegen/xai-grok-sampling-types/src/types.rs`
 
 - What: `#[serde(default)]` on the streaming chat-completions types that the
