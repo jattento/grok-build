@@ -14147,6 +14147,7 @@ dependencies = [
  "notify-debouncer-mini",
  "nucleo",
  "obfstr",
+ "overlay-core",
  "overlay-subagent-router",
  "parking_lot",
  "portable-pty",

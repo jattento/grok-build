@@ -55,10 +55,31 @@ Template for new entries:
 
 ### `crates/codegen/xai-grok-shell/Cargo.toml`
 
-- What: path dependency on `overlay-subagent-router`.
-- Why here: the live child session owns retrying a failed model turn without
-  creating a second subagent/session identity.
-- Retire when: upstream exposes a provider-fallback hook inside child sampling.
+- What: path dependencies on `overlay-subagent-router` and `overlay-core`.
+- Why here: the live child session owns retrying a failed model turn, and the
+  final model resolver must apply the fork-owned context-window policy.
+- Retire when: upstream exposes equivalent provider fallback and route-specific
+  model-policy hooks.
+
+### `crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs`
+### `crates/codegen/xai-grok-shell/src/extensions/mod.rs`
+### `crates/codegen/xai-grok-shell/src/extensions/skills.rs`
+### `crates/codegen/xai-grok-shell/src/extensions/workflows.rs`
+### `crates/codegen/xai-grok-shell/src/session/commands.rs`
+### `crates/codegen/xai-grok-shell/src/session/handle.rs`
+### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs`
+### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs`
+### `crates/codegen/xai-grok-shell/src/session/workflow/manager.rs`
+
+- What: adds structured `x.ai/workflows/{launch,snapshot,control}` ACP methods,
+  routed through the resident session actor, with stable typed errors and exact
+  `WorkflowUpdated` snapshot/control payloads; structured launches suppress only
+  chat completion turns while retaining workflow notifications.
+- Why here: workflow registry, tracker, manager, live elapsed time, and immutable
+  resume sources are session-private, and ACP extensions must use the existing
+  `SessionHandle -> SessionCommand -> SessionActor` ownership boundary.
+- Retire when: upstream exposes equivalent structured workflow ACP methods and a
+  manager launch mode that does not enqueue a model-facing completion turn.
 
 ### `crates/codegen/xai-grok-shell/src/agent/subagent/attempt_runner.rs`
 ### `crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs`
@@ -115,6 +136,12 @@ Template for new entries:
   state; later layers would need unsafe text parsing or could race event drain.
 - Retire when: the sampler directly reports whether a failed attempt is safe to
   replay through ACP.
+
+### `crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs`
+
+- What: imports the `base64::Engine` trait required by the existing image bridge test.
+- Why here: the upstream test calls the trait method directly and otherwise does not compile.
+- Retire when: upstream carries the import.
 
 ### `crates/codegen/xai-grok-subagent-resolution/src/overrides.rs`
 
@@ -187,12 +214,14 @@ Template for new entries:
   `overlay-*` packages dependency-free keeps this diff to a few lines.
 
 ### `crates/codegen/xai-grok-shell/src/agent/config.rs`
+### `crates/codegen/xai-grok-shell/src/agent/config_tests.rs`
 
-- What: clamps `gpt-*` `context_window` to 372000, the usable Codex /
-  cliproxy budget. Config values like 1050000 overflow that route.
-- Why here: `resolve_model_list` is the last place every catalog entry
-  is assembled; config alone cannot cap a too-large user window.
-- Retire when: the GPT route accepts the advertised 1.05M window.
+- What: calls the overlay-owned route policy after model resolution and proves
+  every released built-in and `cliproxy` definition resolves to its cited
+  practical window.
+- Why here: `resolve_model_list` is the shipped boundary where config, remote,
+  and built-in definitions become the runtime catalog.
+- Retire when: upstream exposes a route-specific post-resolution model hook.
 
 ### `crates/codegen/xai-grok-shell/src/session/compaction.rs`
 ### `crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs`

@@ -115,11 +115,31 @@ impl WorkflowManager {
         self.tracker.clone()
     }
 
-    pub(crate) fn launch(
+    pub(crate) async fn launch(
         &mut self,
         resolved: ResolvedWorkflow,
         spec: LaunchSpec,
     ) -> Result<(String, oneshot::Receiver<WorkflowOutcome>), LaunchError> {
+        self.launch_inner(resolved, spec, true).await
+    }
+
+    pub(crate) async fn launch_without_completion_turn(
+        &mut self,
+        resolved: ResolvedWorkflow,
+        spec: LaunchSpec,
+    ) -> Result<(String, oneshot::Receiver<WorkflowOutcome>), LaunchError> {
+        self.launch_inner(resolved, spec, false).await
+    }
+
+    async fn launch_inner(
+        &mut self,
+        resolved: ResolvedWorkflow,
+        spec: LaunchSpec,
+        enqueue_completion_turn: bool,
+    ) -> Result<(String, oneshot::Receiver<WorkflowOutcome>), LaunchError> {
+        if let Some(run_id) = spec.resume_run_id.as_deref() {
+            self.await_retiring_run(run_id).await;
+        }
         self.reap_terminal_runs();
         if self.active.len().saturating_add(self.retiring.len())
             >= WORKFLOW_MAX_ACTIVE_RUNS_PER_SESSION
@@ -448,7 +468,7 @@ impl WorkflowManager {
                     return;
                 }
                 notify.broadcast(&state, elapsed, 0, true);
-                if state.status.is_completion_reportable() {
+                if enqueue_completion_turn && state.status.is_completion_reportable() {
                     let _ = session_cmd_tx.send(
                         crate::session::commands::SessionCommand::WorkflowCompletionTurn {
                             run_id: watcher_run_id.clone(),
@@ -503,6 +523,71 @@ impl WorkflowManager {
             super::host_service::DEFAULT_WORKFLOW_MAX_CONCURRENT_AGENTS,
         )));
         (manager, tracker)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_bundle_with_session_commands() -> (
+        WorkflowManager,
+        mpsc::UnboundedReceiver<crate::session::commands::SessionCommand>,
+    ) {
+        let tracker = Arc::new(parking_lot::Mutex::new(WorkflowTracker::default()));
+        let (gateway_tx, _gateway_rx) = mpsc::unbounded_channel();
+        let (persist_tx, mut persist_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(message) = persist_rx.recv().await {
+                if let crate::session::persistence::PersistenceMsg::WorkflowRunStateAndAck {
+                    respond_to,
+                    ..
+                } = message
+                {
+                    let _ = respond_to.send(Ok(()));
+                }
+            }
+        });
+        let store = WorkflowRunStore::new(None, persist_tx.clone());
+        let notify = super::notify::WorkflowNotifySender::new(
+            agent_client_protocol::SessionId::new("test-session"),
+            xai_acp_lib::AcpAgentGatewaySender::new(gateway_tx),
+            persist_tx,
+            store.clone(),
+        );
+        let (session_cmd_tx, session_cmd_rx) = mpsc::unbounded_channel();
+        let (subagent_tx, mut subagent_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            use xai_grok_tools::implementations::grok_build::task::types::{
+                SubagentCancelOutcome, SubagentEvent,
+            };
+            while let Some(event) = subagent_rx.recv().await {
+                if let SubagentEvent::Cancel(request) = event {
+                    let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled);
+                }
+            }
+        });
+        let manager = WorkflowManager::new(
+            "test-session".into(),
+            None,
+            std::env::temp_dir(),
+            tracker,
+            store,
+            notify,
+            subagent_tx,
+            Arc::new(|_, _, _| {}),
+            session_cmd_tx,
+            std::collections::HashMap::new(),
+            super::host_service::DEFAULT_WORKFLOW_MAX_CONCURRENT_AGENTS,
+        );
+        (manager, session_cmd_rx)
+    }
+
+    async fn await_retiring_run(&mut self, run_id: &str) {
+        while let Some(index) = self
+            .retiring
+            .iter()
+            .position(|(retiring_run_id, _)| retiring_run_id == run_id)
+        {
+            let (_, done) = self.retiring.swap_remove(index);
+            let _ = done.await;
+        }
     }
 
     fn reap_terminal_runs(&mut self) {
@@ -944,7 +1029,7 @@ mod tests {
             "let meta = #{ name: \"t\", description: \"d\" };\ncomplete(\"done\");".into(),
         )
         .unwrap();
-        let (run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
+        let (run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
 
         let outcome = outcome_rx.await.unwrap();
         assert!(matches!(outcome, WorkflowOutcome::Completed { .. }));
@@ -964,12 +1049,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn structured_launch_can_suppress_completion_turn() {
+        let (mut manager, mut session_cmd_rx) =
+            WorkflowManager::test_bundle_with_session_commands();
+        let resolved = resolve_inline(
+            "let meta = #{ name: \"t\", description: \"d\" };\ncomplete(\"done\");".into(),
+        )
+        .unwrap();
+        let (_run_id, outcome_rx) = manager
+            .launch_without_completion_turn(resolved, spec())
+            .await
+            .unwrap();
+        let outcome = outcome_rx.await.unwrap();
+        assert!(
+            matches!(outcome, WorkflowOutcome::Completed { .. }),
+            "unexpected outcome: {outcome:?}"
+        );
+        assert!(
+            session_cmd_rx.try_recv().is_err(),
+            "structured ACP launches must not enqueue a chat completion turn"
+        );
+    }
+
+    #[tokio::test]
     async fn plain_resume_uses_immutable_script_not_edited_projection() {
         let dir = tempfile::tempdir().unwrap();
         let (mut manager, _rx) = test_manager(Some(dir.path().to_path_buf()));
         let script = "let meta = #{ name: \"t\", description: \"d\" };\nawait_user(\"user\", \"pause\");\ncomplete(\"original\");";
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
+            .await
             .unwrap();
         assert!(matches!(
             outcome_rx.await.unwrap(),
@@ -993,6 +1102,7 @@ mod tests {
                     ..spec()
                 },
             )
+            .await
             .unwrap();
         match outcome_rx.await.unwrap() {
             WorkflowOutcome::Completed { result } => {
@@ -1041,12 +1151,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn immediate_resume_waits_for_same_run_retirement() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut manager, mut subagent_rx) = test_manager(Some(dir.path().to_path_buf()));
+        let script = "let meta = #{ name: \"t\", description: \"d\" };\nlet r = agent(\"work\");\ncomplete(r.output);";
+        let run_id = "wf_immediate_resume".to_string();
+        manager
+            .store
+            .register(&run_id, script, &serde_json::json!({}))
+            .unwrap();
+        manager.tracker.lock().start_run(
+            run_id.clone(),
+            "t".into(),
+            "obj".into(),
+            Vec::new(),
+            Some(WORKFLOW_DEFAULT_AGENT_BUDGET),
+            None,
+        );
+        manager.tracker.lock().pause_user(&run_id, None).unwrap();
+
+        let (retiring_tx, retiring_rx) = oneshot::channel();
+        manager.retiring.push((run_id.clone(), retiring_rx));
+        let mut resume = Box::pin(manager.launch(
+            resolve_inline(script.into()).unwrap(),
+            LaunchSpec {
+                resume_run_id: Some(run_id.clone()),
+                ..spec()
+            },
+        ));
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), resume.as_mut())
+                .await
+                .is_err(),
+            "resume must not start while the prior execution for the same run is retiring"
+        );
+        retiring_tx.send(()).unwrap();
+        let (resumed_run_id, outcome_rx) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), resume.as_mut())
+                .await
+                .expect("resume should start after retirement completes")
+                .unwrap();
+        assert_eq!(resumed_run_id, run_id);
+
+        let req = recv_spawn(&mut subagent_rx).await;
+        assert!(
+            !req.cancel_token.is_cancelled(),
+            "the retiring execution must not cancel the successor child"
+        );
+        complete_spawn(req);
+        assert!(matches!(
+            outcome_rx.await.unwrap(),
+            WorkflowOutcome::Completed { .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn pause_marks_user_paused_and_resume_replays() {
         let dir = tempfile::tempdir().unwrap();
         let (mut manager, mut subagent_rx) = test_manager(Some(dir.path().to_path_buf()));
         let script = "let meta = #{ name: \"t\", description: \"d\" };\nlet r = agent(\"work\");\ncomplete(r.output);";
         let resolved = resolve_inline(script.into()).unwrap();
-        let (run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
+        let (run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
 
         use xai_grok_tools::implementations::grok_build::task::types::SubagentEvent;
         let spawn_req = subagent_rx.recv().await.expect("spawn request");
@@ -1077,6 +1243,7 @@ mod tests {
                     ..spec()
                 },
             )
+            .await
             .unwrap();
         let spawn_req = subagent_rx.recv().await.expect("respawned agent");
         use xai_grok_tools::implementations::grok_build::task::types::SubagentResult;
@@ -1111,6 +1278,7 @@ mod tests {
         let script = "let meta = #{ name: \"t\", description: \"d\" };\nlet r = agent(\"work\");\ncomplete(r.output);";
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
+            .await
             .unwrap();
 
         let SubagentEvent::Spawn(_first) = subagent_rx.recv().await.expect("first spawn") else {
@@ -1141,6 +1309,7 @@ mod tests {
                     ..spec()
                 },
             )
+            .await
             .unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("respawned agent") else {
             panic!("expected respawn event");
@@ -1174,6 +1343,7 @@ mod tests {
                       complete(content);";
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
+            .await
             .unwrap();
         match outcome_rx.await.unwrap() {
             WorkflowOutcome::Failed { error } => {
@@ -1209,6 +1379,7 @@ mod tests {
                     ..spec()
                 },
             )
+            .await
             .unwrap();
         match outcome_rx.await.unwrap() {
             WorkflowOutcome::Completed { result } => {
@@ -1243,6 +1414,7 @@ mod tests {
         let script = "let meta = #{ name: \"t\", description: \"d\" };\nlet a = agent(\"step one\");\ncomplete(a.output);";
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
+            .await
             .unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("first spawn") else {
             panic!("expected spawn event");
@@ -1279,6 +1451,7 @@ mod tests {
                         ..spec()
                     },
                 )
+                .await
                 .unwrap_err();
             manager.tracker = original_tracker;
             assert!(
@@ -1339,7 +1512,7 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        let (_run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
+        let (_run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
 
         let spawn_req = subagent_rx.recv().await.expect("spawn event");
         let SubagentEvent::Spawn(req) = spawn_req else {
@@ -1380,12 +1553,14 @@ mod tests {
         for _ in 0..WORKFLOW_MAX_ACTIVE_RUNS_PER_SESSION {
             let (_, outcome) = manager
                 .launch(resolve_inline(script.into()).unwrap(), spec())
+                .await
                 .unwrap();
             outcomes.push(outcome);
             spawned.push(subagent_rx.recv().await.expect("spawn event"));
         }
         let error = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
+            .await
             .unwrap_err();
         assert!(matches!(error, LaunchError::TooManyActiveRuns));
         drop(spawned);
@@ -1414,7 +1589,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            manager.launch(resolved, spec()).unwrap_err(),
+            manager.launch(resolved, spec()).await.unwrap_err(),
             LaunchError::TooManyActiveRuns
         ));
 
@@ -1442,7 +1617,7 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        let (_run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
+        let (_run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
 
         match outcome_rx.await.unwrap() {
             WorkflowOutcome::Failed { error } => {
@@ -1480,6 +1655,7 @@ mod tests {
                     ..spec()
                 },
             )
+            .await
             .unwrap();
 
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("first spawn") else {
@@ -1561,6 +1737,7 @@ mod tests {
                     ..spec()
                 },
             )
+            .await
             .unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
             panic!("expected spawn");
@@ -1599,7 +1776,7 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        let (_run_id, _outcome_rx) = manager.launch(resolved, spec()).unwrap();
+        let (_run_id, _outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
             panic!("expected spawn");
         };
@@ -1638,6 +1815,7 @@ mod tests {
                     ..spec()
                 },
             )
+            .await
             .unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
             panic!("expected spawn");
@@ -1673,7 +1851,7 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        let (run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
+        let (run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
 
         let spawn_req = subagent_rx.recv().await.expect("spawn event");
         let SubagentEvent::Spawn(req) = spawn_req else {
@@ -1712,6 +1890,7 @@ mod tests {
         manager.test_set_max_concurrent_agents(CAP);
         let (_run_id, outcome_rx) = manager
             .launch(resolve_inline(parallel_n_script(N)).unwrap(), spec())
+            .await
             .unwrap();
 
         let mut live = Vec::new();
@@ -1748,6 +1927,7 @@ mod tests {
         manager.test_set_max_concurrent_agents(1);
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(parallel_n_script(4)).unwrap(), spec())
+            .await
             .unwrap();
 
         let first = recv_spawn(&mut subagent_rx).await;

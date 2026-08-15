@@ -1383,7 +1383,7 @@ pub(crate) async fn spawn_session_actor(
                 };
                 let launch_outcome = {
                     let mut mgr = manager.lock().await;
-                    let result = mgr.launch(resolved, spec);
+                    let result = mgr.launch(resolved, spec).await;
                     let script_path = result
                         .as_ref()
                         .ok()

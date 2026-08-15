@@ -654,6 +654,7 @@ mod tests {
             model_metadata: None,
             retry_after_secs: None,
             should_retry: Some(false),
+            error_code: None,
         });
         assert!(!is_retryable_provider_failure(&header_veto));
 
@@ -663,6 +664,7 @@ mod tests {
             model_metadata: None,
             retry_after_secs: None,
             should_retry: None,
+            error_code: None,
         });
         assert!(!is_retryable_provider_failure(&context_veto));
 

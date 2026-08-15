@@ -2527,7 +2527,7 @@ impl acp::Agent for MvpAgent {
                 let ops = self.resolve_workspace_ops()?;
                 crate::extensions::code_nav::handle(self, &ops, &args).await
             }
-            s if s.starts_with("x.ai/skills/") || s == "x.ai/workflows/list" => {
+            s if s.starts_with("x.ai/skills/") => {
                 let compat = self.cfg.borrow().compat_resolved;
                 crate::extensions::skills::handle(
                         self,
@@ -2536,6 +2536,9 @@ impl acp::Agent for MvpAgent {
                         compat,
                     )
                     .await
+            }
+            s if s.starts_with("x.ai/workflows/") => {
+                crate::extensions::workflows::handle(self, &args).await
             }
             s if s.starts_with("x.ai/review") => {
                 crate::extensions::feedback::handle(self, &args).await
