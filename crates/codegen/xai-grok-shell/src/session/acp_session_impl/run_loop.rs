@@ -1733,6 +1733,31 @@ pub(super) async fn run_session(
                             let _ = respond_to
                                 .send((availability.workflows, availability.workflow_management));
                         }
+                        SessionCommand::LaunchNamedWorkflow {
+                            name,
+                            args,
+                            agent_budget,
+                            respond_to,
+                        } => {
+                            let result = session
+                                .launch_named_workflow_structured(name, args, agent_budget)
+                                .await;
+                            let _ = respond_to.send(result);
+                        }
+                        SessionCommand::SnapshotWorkflows { respond_to } => {
+                            let _ = respond_to.send(session.workflow_snapshot_structured().await);
+                        }
+                        SessionCommand::ControlWorkflow {
+                            run_id,
+                            operation,
+                            agent_budget,
+                            respond_to,
+                        } => {
+                            let result = session
+                                .control_workflow_structured(run_id, operation, agent_budget)
+                                .await;
+                            let _ = respond_to.send(result);
+                        }
                         SessionCommand::ListAvailableCommands { respond_to } => {
                             let skills = session.slash_skills_for_resolve().await;
                             let tool_names = session.registered_tool_names().await;

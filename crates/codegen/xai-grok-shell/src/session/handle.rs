@@ -191,6 +191,14 @@ pub struct SessionHandle {
     pub scheduler_handle:
         Option<xai_grok_tools::implementations::grok_build::scheduler::types::SchedulerHandle>,
 }
+
+fn workflow_actor_unavailable() -> super::WorkflowCommandError {
+    super::WorkflowCommandError::new(
+        "workflow_session_unavailable",
+        "the resident session actor is unavailable",
+    )
+}
+
 impl SessionHandle {
     /// Last assistant `model_id` / `model_fingerprint` in conversation (global, not turn-scoped).
     pub(crate) async fn get_model_metadata(&self) -> xai_chat_state::ModelMetadata {
@@ -414,6 +422,53 @@ impl SessionHandle {
         }
         rx.await.unwrap_or((false, false))
     }
+
+    pub(crate) async fn launch_named_workflow_structured(
+        &self,
+        name: String,
+        args: serde_json::Value,
+        agent_budget: Option<u64>,
+    ) -> Result<super::WorkflowLaunchResult, super::WorkflowCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::LaunchNamedWorkflow {
+                name,
+                args,
+                agent_budget,
+                respond_to: tx,
+            })
+            .map_err(|_| workflow_actor_unavailable())?;
+        rx.await.map_err(|_| workflow_actor_unavailable())?
+    }
+
+    pub(crate) async fn workflow_snapshot(
+        &self,
+    ) -> Result<Vec<serde_json::Value>, super::WorkflowCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::SnapshotWorkflows { respond_to: tx })
+            .map_err(|_| workflow_actor_unavailable())?;
+        rx.await.map_err(|_| workflow_actor_unavailable())?
+    }
+
+    pub(crate) async fn control_workflow(
+        &self,
+        run_id: String,
+        operation: super::WorkflowControlOperation,
+        agent_budget: Option<u64>,
+    ) -> Result<serde_json::Value, super::WorkflowCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::ControlWorkflow {
+                run_id,
+                operation,
+                agent_budget,
+                respond_to: tx,
+            })
+            .map_err(|_| workflow_actor_unavailable())?;
+        rx.await.map_err(|_| workflow_actor_unavailable())?
+    }
+
     pub(crate) async fn list_available_commands(
         &self,
     ) -> crate::session::slash_commands::ListCommandsResponse {

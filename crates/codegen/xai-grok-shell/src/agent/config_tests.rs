@@ -1914,6 +1914,51 @@ fn parses_model_context_window() {
     assert_eq!(model.info.context_window, NonZeroU64::new(256_000).unwrap());
 }
 #[test]
+fn released_model_windows_flow_through_the_real_resolver() {
+    let mut cfg = Config::default();
+    cfg.model_providers.insert(
+        "cliproxy".to_string(),
+        crate::agent::model_providers::ModelProviderConfig::default(),
+    );
+    for policy in overlay_core::model_window_policies()
+        .iter()
+        .filter(|policy| policy.route == "cliproxy")
+    {
+        cfg.config_models.insert(
+            policy.model.to_string(),
+            ConfigModelOverride {
+                model: Some(policy.model.to_string()),
+                base_url: Some("http://127.0.0.1.invalid/v1".to_string()),
+                model_provider: Some("cliproxy".to_string()),
+                context_window: Some(1),
+                ..Default::default()
+            },
+        );
+    }
+
+    let resolved = resolve_model_list(&cfg, None);
+    println!("Verified: {}", overlay_core::MODEL_WINDOWS_VERIFIED_ON);
+    println!("| Model | Route | Effective context | Evidence |");
+    println!("| --- | --- | ---: | --- |");
+    for policy in overlay_core::model_window_policies() {
+        let entry = resolved
+            .get(policy.model)
+            .unwrap_or_else(|| panic!("{} must resolve", policy.model));
+        println!(
+            "| `{}` | `{}` | {} | [{}]({}) |",
+            policy.model, policy.route, entry.info.context_window, policy.source, policy.source_url
+        );
+        assert_eq!(
+            entry.info.context_window.get(),
+            policy.context_window,
+            "{} must use its cited {} limit",
+            policy.model,
+            policy.source
+        );
+    }
+}
+
+#[test]
 fn sampling_config_context_window_from_entry_or_default() {
     let model = test_model_entry("any-model", "https://api.x.ai/v1", None, None, None);
     let config = sampling_config_for_model(

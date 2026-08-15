@@ -246,6 +246,49 @@ pub struct CancelOptions {
     /// Drives the cancel-rate metric, and marks an untriggered cancel as the user's.
     pub user_initiated: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowControlOperation {
+    Pause,
+    Resume,
+    Stop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowLaunchResult {
+    pub run_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowCommandError {
+    pub code: &'static str,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+}
+
+impl WorkflowCommandError {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    pub(crate) fn with_data(
+        code: &'static str,
+        message: impl Into<String>,
+        data: serde_json::Value,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: Some(data),
+        }
+    }
+}
+
 pub enum SessionCommand {
     Initialize {
         system_prompt: String,
@@ -768,6 +811,21 @@ pub enum SessionCommand {
     AdvertiseCommands,
     GetWorkflowCatalogState {
         respond_to: oneshot::Sender<(bool, bool)>,
+    },
+    LaunchNamedWorkflow {
+        name: String,
+        args: serde_json::Value,
+        agent_budget: Option<u64>,
+        respond_to: oneshot::Sender<Result<WorkflowLaunchResult, WorkflowCommandError>>,
+    },
+    SnapshotWorkflows {
+        respond_to: oneshot::Sender<Result<Vec<serde_json::Value>, WorkflowCommandError>>,
+    },
+    ControlWorkflow {
+        run_id: String,
+        operation: WorkflowControlOperation,
+        agent_budget: Option<u64>,
+        respond_to: oneshot::Sender<Result<serde_json::Value, WorkflowCommandError>>,
     },
     ListAvailableCommands {
         respond_to: oneshot::Sender<crate::session::slash_commands::ListCommandsResponse>,
