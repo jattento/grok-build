@@ -3638,6 +3638,18 @@ pub(crate) fn resolve_model_list(
             }
         }
     }
+    {
+        const GPT_SUPPORTED_CONTEXT_WINDOW: u64 = 372_000;
+        if let Some(cw) = NonZeroU64::new(GPT_SUPPORTED_CONTEXT_WINDOW) {
+            for entry in resolved.values_mut() {
+                if entry.info.model.starts_with("gpt-")
+                    && entry.info.context_window.get() > GPT_SUPPORTED_CONTEXT_WINDOW
+                {
+                    entry.info.context_window = cw;
+                }
+            }
+        }
+    }
     if let Some(ref global_agent_type) = cfg.models.agent_type {
         tracing::warn!(
             global_agent_type = %global_agent_type,
