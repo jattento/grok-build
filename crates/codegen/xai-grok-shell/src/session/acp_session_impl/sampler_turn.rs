@@ -870,7 +870,13 @@ impl SessionActor {
                 .model_metadata
                 .as_ref()
                 .and_then(|m| m.context_window)
-                .expect("should_compact_on_error guarantees context_window");
+                .filter(|n| *n > 0)
+                .or(self
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .map(|c| c.context_window.get()))
+                .unwrap_or(crate::remote::DEFAULT_CONTEXT_WINDOW);
             {
                 let total_tokens = self.chat_state_handle.get_estimated_total_tokens().await;
                 let percentage = xai_token_estimation::usage_percentage_u8(total_tokens, cw);

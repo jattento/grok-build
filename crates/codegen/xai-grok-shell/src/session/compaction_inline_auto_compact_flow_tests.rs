@@ -1584,7 +1584,8 @@ async fn test_compact_on_error_no_trigger_when_tokens_within_new_window() {
             let (gateway_tx, _) = mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             let (persistence_tx, _) = mpsc::unbounded_channel::<PersistenceMsg>();
             let actor = create_test_actor(150_000, 1_000_000, 85, gateway_tx, persistence_tx).await;
-            let err = api_error_with_context_window(200_000);
+            let mut err = api_error_with_context_window(200_000);
+            err.message = "invalid request".to_string();
             assert!(!actor.should_compact_on_error(&err).await);
         })
         .await;
@@ -1602,7 +1603,7 @@ async fn test_compact_on_error_noop_without_model_metadata() {
             let err = xai_grok_sampler::SamplingErrorInfo {
                 kind: xai_grok_sampler::SamplingErrorKind::Api,
                 status_code: Some(400),
-                message: "prompt is too long".to_string(),
+                message: "invalid request".to_string(),
                 is_retryable: false,
                 retry_after_secs: None,
                 should_retry: None,
