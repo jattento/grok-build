@@ -1809,6 +1809,9 @@ impl SessionActor {
         {
             return false;
         }
+        if xai_grok_sampling_types::is_context_length_error(&err.message) {
+            return true;
+        }
         let Some(ref metadata) = err.model_metadata else {
             return false;
         };
