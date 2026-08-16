@@ -103,13 +103,35 @@ a shared file from a branch you did not just cut.
 ```
 overlay/                  <- 100% ours, upstream never writes here, never conflicts
   overlay-core/           <- Rust package: the single entry point
-  scripts/                <- sync-upstream.sh, overlay-diff.sh
-  TOUCHPOINTS.md          <- ledger of every edit we made inside xAI's tree
+  scripts/                <- sync-upstream.sh, overlay-diff.sh, install-hooks.sh
+  TOUCHPOINTS.md          <- ledger of every *modification* to an upstream file
+  delta-budget.tsv        <- per-file changed-line ratchet (M files + adapters)
+  adapters-outside-overlay.txt  <- sanctioned thin adapters that must sit in crates/
 crates/, prod/, third_party/, bin/   <- xAI's tree. Treat as read-mostly.
 ```
 
 Rust packages we own are named `overlay-*` and live in `overlay/`. The prefix
 makes our code obvious in imports, logs, and `cargo` output.
+
+**Hard rule:** a whole file we author lives in `overlay/`, never inside
+`crates/` or any other upstream tree. Parking a new file of ours next to
+upstream code is not a touchpoint — it is a misplaced ownership boundary.
+A touchpoint is a *modification* to an upstream file (git status `M`), not a
+new file of ours (git status `A`) sitting in their tree.
+
+**One sanctioned exception:** a thin adapter that cannot leave the upstream
+module tree (ACP dispatch enters through a closed `match`, types are
+shell-private, etc.). Every such file must satisfy all three conditions:
+
+1. **Naming.** Basename starts with `overlay_` (mirrors the `overlay-*` crate
+   prefix). Prevents collision with a future upstream snapshot.
+2. **Listed.** Path is in `overlay/adapters-outside-overlay.txt`.
+3. **Budgeted.** Path has a line entry in `overlay/delta-budget.tsv` so the
+   adapter cannot quietly grow into business logic.
+
+Naming is not waivable — listing a non-`overlay_*` path does nothing. A listed
+path that leaves the delta fails the gate until its line is removed, so the
+list cannot rot.
 
 ## The escalation ladder
 
@@ -153,14 +175,44 @@ change. On conflict, take upstream's version wholesale and re-run
 
 ## The touchpoint ledger
 
-`overlay/TOUCHPOINTS.md` lists every file outside `overlay/` that we changed,
-why it had to be there, and what would let us retire it.
+`overlay/TOUCHPOINTS.md` lists every upstream file we *modified*, why the edit
+had to be there, and what would let us retire it. It is the human ledger for
+status-`M` paths only.
+
+`overlay/scripts/overlay-diff.sh` is the machine gate. Against `upstream/main`
+it splits the delta and enforces three checks:
+
+1. **Whole files outside `overlay/` only as sanctioned adapters.** Status-`A`
+   paths outside `overlay/` must be `overlay_*`-named, listed in
+   `overlay/adapters-outside-overlay.txt`, and budgeted. Any of the three
+   missing is a hard failure. A listed path that left the delta fails until
+   you delete its line.
+2. **Every `M` file is documented** in `TOUCHPOINTS.md` (heading containing
+   the path in backticks).
+3. **Per-file and total line budgets** in `overlay/delta-budget.tsv`, covering
+   every `M` file and every sanctioned adapter. `changed-lines` is added +
+   deleted from `git diff --numstat`. The budget only ratchets down.
 
 ```sh
-overlay/scripts/overlay-diff.sh     # prints the delta, fails on undocumented files
+overlay/scripts/overlay-diff.sh
+overlay/scripts/overlay-diff.sh --update-budget
+overlay/scripts/overlay-diff.sh --update-budget --allow-growth "why this growth is unavoidable"
 ```
 
-Run it before finishing any task that touched xAI's tree, and after every sync.
+`--update-budget` rewrites `delta-budget.tsv` from the current tree but
+refuses to raise any number. If a file (or the total) grew, shrink the change
+or re-run with `--allow-growth "<reason>"`, which writes the new budget and
+appends a dated reason comment so growth leaves a permanent, reviewable trace.
+
+`AGENTS.md` is excluded from the gates: it is fork policy at the repo root,
+not an upstream touchpoint and not crates code.
+
+Run the script before finishing any task that touched xAI's tree, and after
+every sync. Install the pre-push hook once so pushes cannot skip it:
+
+```sh
+overlay/scripts/install-hooks.sh
+```
 
 ## Building and verifying
 
@@ -220,8 +272,16 @@ Deleting either mid-task only buys space back by making the next `cargo check`,
 A change is finished when all of these hold:
 
 - It sits at the lowest workable rung of the ladder.
-- Any new upstream touchpoint is recorded in `TOUCHPOINTS.md`.
-- `overlay/scripts/overlay-diff.sh` passes.
+- Any whole file we authored lives under `overlay/`, unless it is a sanctioned
+  `overlay_*` adapter listed in `adapters-outside-overlay.txt` and budgeted.
+- Any new upstream touchpoint (`M`) is recorded in `TOUCHPOINTS.md` and fits
+  inside `overlay/delta-budget.tsv` (or the budget was deliberately updated
+  with `--allow-growth` and a reason).
+- `overlay/scripts/overlay-diff.sh` passes (Gates 1–3: adapters sanctioned,
+  every `M` documented, line budget held).
+- The pre-push hook is installed once on this clone via
+  `overlay/scripts/install-hooks.sh` (idempotent; blocks pushes that fail the
+  gates). Emergency bypass only: `git push --no-verify`.
 - The overlay packages and the binary compile, and overlay tests pass.
 - Our commits are separable and prefixed `overlay:`.
 - `target/release/incremental` and `target/debug` are deleted, now that nothing

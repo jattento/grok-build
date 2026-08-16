@@ -1,0 +1,79 @@
+# overlay/delta-budget.tsv
+#
+# Per-file changed-line budget for the costly delta against upstream:
+#   - every modified upstream file (git status M)
+#   - every whole file outside overlay/ (git status A), including
+#     sanctioned adapters listed in adapters-outside-overlay.txt
+# changed-lines = added + deleted from: git diff --numstat <base>...HEAD
+# Sorted by path. TOTAL is the sum of the file budgets.
+#
+# The budget only ratchets down. overlay-diff.sh --update-budget rewrites
+# this file from the current tree but refuses to raise any number unless
+# you pass --allow-growth "<reason>", which appends a dated comment.
+#
+# Format: <changed-lines><TAB><path>
+#
+32	Cargo.lock
+3	Cargo.toml
+6	crates/codegen/xai-grok-markdown/src/buffers.rs
+4	crates/codegen/xai-grok-markdown/src/lib.rs
+37	crates/codegen/xai-grok-markdown/src/output.rs
+2	crates/codegen/xai-grok-markdown/src/parse.rs
+85	crates/codegen/xai-grok-markdown/src/render.rs
+16	crates/codegen/xai-grok-markdown/src/streaming.rs
+3	crates/codegen/xai-grok-pager-bin/Cargo.toml
+2	crates/codegen/xai-grok-pager-bin/src/main.rs
+2	crates/codegen/xai-grok-pager-render/Cargo.toml
+2	crates/codegen/xai-grok-pager-render/src/syntax.rs
+2	crates/codegen/xai-grok-pager-render/src/theme/cache.rs
+37	crates/codegen/xai-grok-pager-render/src/theme/mod.rs
+2	crates/codegen/xai-grok-pager/Cargo.toml
+56	crates/codegen/xai-grok-pager/src/app/agent_view/media.rs
+20	crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs
+45	crates/codegen/xai-grok-pager/src/diagnostics/doctor_format_tests.rs
+89	crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs
+129	crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs
+83	crates/codegen/xai-grok-pager/src/scrollback/blocks/markdown_content.rs
+305	crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs
+23	crates/codegen/xai-grok-pager/src/scrollback/render.rs
+20	crates/codegen/xai-grok-pager/src/settings/defs.rs
+5	crates/codegen/xai-grok-pager/src/views/file_search/line_viewer.rs
+5	crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
+4	crates/codegen/xai-grok-pager/src/views/welcome/mod.rs
+2	crates/codegen/xai-grok-sampling-types/src/messages.rs
+25	crates/codegen/xai-grok-sampling-types/src/types.rs
+3	crates/codegen/xai-grok-shell/Cargo.toml
+11	crates/codegen/xai-grok-shell/src/agent/config.rs
+45	crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+5	crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
+10	crates/codegen/xai-grok-shell/src/agent/subagent/attempt_runner.rs
+146	crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
+27	crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs
+20	crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs
+1	crates/codegen/xai-grok-shell/src/extensions/mod.rs
+134	crates/codegen/xai-grok-shell/src/extensions/overlay_workflows.rs
+25	crates/codegen/xai-grok-shell/src/extensions/skills.rs
+183	crates/codegen/xai-grok-shell/src/sampling/error.rs
+25	crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
+38	crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
+2	crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
+11	crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
+623	crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs
+5	crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
+8	crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
+1	crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
+58	crates/codegen/xai-grok-shell/src/session/commands.rs
+3	crates/codegen/xai-grok-shell/src/session/compaction.rs
+5	crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
+55	crates/codegen/xai-grok-shell/src/session/handle.rs
+17	crates/codegen/xai-grok-shell/src/session/streaming_capture.rs
+179	crates/codegen/xai-grok-shell/src/session/workflow/manager.rs
+2	crates/codegen/xai-grok-subagent-resolution/src/overrides.rs
+1	crates/codegen/xai-grok-tools/Cargo.toml
+11	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs
+23	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_state.rs
+80	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
+229	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
+6	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
+52	crates/common/xai-tool-types/src/task.rs
+3090	TOTAL
