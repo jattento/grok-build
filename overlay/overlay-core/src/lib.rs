@@ -6,6 +6,8 @@
 //!
 //! See `AGENTS.md` at the repo root and `overlay/TOUCHPOINTS.md`.
 
+pub mod themes;
+
 /// Version of the overlay itself, independent from the upstream grok version.
 pub const OVERLAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 

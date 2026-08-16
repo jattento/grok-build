@@ -8,6 +8,8 @@ license = "Apache-2.0"
 # TTY safety
 dunce = { workspace = true }
 xai-tty-utils = { workspace = true }
+# Fork-local customizations. See AGENTS.md / overlay/TOUCHPOINTS.md.
+overlay-core = { path = "../../../overlay/overlay-core" }
 
 # Rendering
 ratatui = { workspace = true, features = [

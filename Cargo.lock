@@ -13938,6 +13938,7 @@ dependencies = [
  "libc",
  "linkify",
  "notify",
+ "overlay-core",
  "pretty_assertions",
  "ratatui",
  "ratatui-core",
