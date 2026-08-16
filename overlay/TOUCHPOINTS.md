@@ -69,7 +69,6 @@ Template for new entries:
 ### `crates/codegen/xai-grok-shell/src/session/handle.rs`
 ### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs`
 ### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs`
-### `crates/codegen/xai-grok-shell/src/session/workflow/manager.rs`
 
 - What: adds structured `x.ai/workflows/{launch,snapshot,control}` ACP methods,
   routed through the resident session actor, with stable typed errors and exact
@@ -80,6 +79,29 @@ Template for new entries:
   `SessionHandle -> SessionCommand -> SessionActor` ownership boundary.
 - Retire when: upstream exposes equivalent structured workflow ACP methods and a
   manager launch mode that does not enqueue a model-facing completion turn.
+
+### `crates/codegen/xai-grok-shell/src/session/workflow/manager.rs`
+
+- What: ordinary `launch` stays synchronous (upstream shape); structured
+  `launch_without_completion_turn` and resume-capable `launch_resuming` are
+  async and own the same-run retirement wait before starting; structured
+  launches also suppress only chat completion turns.
+- Why here: retirement wait is async and only needed on resume; making ordinary
+  launch async forced pure `.await` churn into upstream call sites the fork
+  otherwise does not own.
+- Retire when: upstream exposes structured launch without a completion turn and
+  a first-class resume path that awaits prior-run retirement.
+
+### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs`
+
+- What: awaits the resume-aware workflow launch so a workflow-tool resume
+  cannot race a same-id run that is still retiring.
+- Why here: this actor owns the background workflow launch channel and the
+  manager lock, and the retirement wait must happen between acquiring the lock
+  and launching.
+- Retire when: upstream's workflow-tool launch awaits same-run retirement
+  before starting a resume, or the workflow tool no longer accepts
+  `resume_from_run_id`.
 
 ### `crates/codegen/xai-grok-shell/src/agent/subagent/attempt_runner.rs`
 ### `crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs`

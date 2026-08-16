@@ -31,12 +31,7 @@ impl SessionActor {
             agent_budget: None,
             resume_run_id: None,
         };
-        let launched = self
-            .workflow_manager
-            .lock()
-            .await
-            .launch(resolved, spec)
-            .await;
+        let launched = self.workflow_manager.lock().await.launch(resolved, spec);
         match launched {
             Ok((run_id, outcome_rx)) => {
                 let (display, objective) = self
@@ -205,7 +200,7 @@ impl SessionActor {
                     .workflow_manager
                     .lock()
                     .await
-                    .launch(resolved, spec)
+                    .launch_resuming(resolved, spec)
                     .await
                 {
                     Ok((rid, outcome_rx)) => {
