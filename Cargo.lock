@@ -7311,6 +7311,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "overlay-workflow-control"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "p256"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14196,6 +14204,7 @@ dependencies = [
  "obfstr",
  "overlay-core",
  "overlay-subagent-router",
+ "overlay-workflow-control",
  "parking_lot",
  "portable-pty",
  "pretty_assertions",

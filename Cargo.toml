@@ -101,6 +101,7 @@ members = [
     "third_party/ordered_hashmap",
     "overlay/overlay-core",
     "overlay/overlay-subagent-router",
+    "overlay/overlay-workflow-control",
 ]
 
 [workspace.package]

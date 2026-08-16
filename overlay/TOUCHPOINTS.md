@@ -64,21 +64,33 @@ Template for new entries:
 ### `crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs`
 ### `crates/codegen/xai-grok-shell/src/extensions/mod.rs`
 ### `crates/codegen/xai-grok-shell/src/extensions/skills.rs`
-### `crates/codegen/xai-grok-shell/src/extensions/workflows.rs`
+### `crates/codegen/xai-grok-shell/src/extensions/overlay_workflows.rs`
 ### `crates/codegen/xai-grok-shell/src/session/commands.rs`
 ### `crates/codegen/xai-grok-shell/src/session/handle.rs`
 ### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs`
 ### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs`
 
-- What: adds structured `x.ai/workflows/{launch,snapshot,control}` ACP methods,
-  routed through the resident session actor, with stable typed errors and exact
-  `WorkflowUpdated` snapshot/control payloads; structured launches suppress only
+- What: thin ACP adapter for structured `x.ai/workflows/{list,launch,snapshot,control}`
+  methods. Wire DTOs and method-name parsing live in
+  `overlay/overlay-workflow-control`; this file only dispatches into the resident
+  session actor, maps the control-operation wire enum onto shell-private
+  `WorkflowControlOperation`, and emits stable typed errors with exact
+  `WorkflowUpdated` snapshot/control payloads. Structured launches suppress only
   chat completion turns while retaining workflow notifications.
-- Why here: workflow registry, tracker, manager, live elapsed time, and immutable
-  resume sources are session-private, and ACP extensions must use the existing
-  `SessionHandle -> SessionCommand -> SessionActor` ownership boundary.
+- Why here: ACP dispatch enters through the closed `MvpAgent::ext_method` match,
+  and `SessionHandle` / `WorkflowControlOperation` / `WorkflowCommandError` are
+  shell-private, so a thin adapter must remain in the shell tree (named
+  `overlay_workflows.rs` so an upstream-added `workflows.rs` cannot collide).
 - Retire when: upstream exposes equivalent structured workflow ACP methods and a
   manager launch mode that does not enqueue a model-facing completion turn.
+
+### `crates/codegen/xai-grok-shell/Cargo.toml` (overlay-workflow-control dep)
+
+- What: path dependency on `overlay/overlay-workflow-control` for the shipped
+  structured-workflow ACP wire contract (DTOs + method names).
+- Why here: the shell adapter deserializes client params and serializes responses
+  through that crate; the crate must not depend on `xai-grok-shell` (would cycle).
+- Retire when: the overlay_workflows adapter itself retires.
 
 ### `crates/codegen/xai-grok-shell/src/session/workflow/manager.rs`
 
