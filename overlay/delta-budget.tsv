@@ -28,14 +28,14 @@
 2	crates/codegen/xai-grok-pager-render/src/theme/cache.rs
 37	crates/codegen/xai-grok-pager-render/src/theme/mod.rs
 2	crates/codegen/xai-grok-pager/Cargo.toml
-56	crates/codegen/xai-grok-pager/src/app/agent_view/media.rs
+27	crates/codegen/xai-grok-pager/src/app/agent_view/media.rs
 20	crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs
-45	crates/codegen/xai-grok-pager/src/diagnostics/doctor_format_tests.rs
-89	crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs
-129	crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs
+2	crates/codegen/xai-grok-pager/src/diagnostics/doctor_format_tests.rs
+25	crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs
+99	crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs
 83	crates/codegen/xai-grok-pager/src/scrollback/blocks/markdown_content.rs
-305	crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs
-23	crates/codegen/xai-grok-pager/src/scrollback/render.rs
+257	crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs
+10	crates/codegen/xai-grok-pager/src/scrollback/render.rs
 20	crates/codegen/xai-grok-pager/src/settings/defs.rs
 5	crates/codegen/xai-grok-pager/src/views/file_search/line_viewer.rs
 5	crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
@@ -53,7 +53,7 @@
 1	crates/codegen/xai-grok-shell/src/extensions/mod.rs
 134	crates/codegen/xai-grok-shell/src/extensions/overlay_workflows.rs
 25	crates/codegen/xai-grok-shell/src/extensions/skills.rs
-183	crates/codegen/xai-grok-shell/src/sampling/error.rs
+149	crates/codegen/xai-grok-shell/src/sampling/error.rs
 25	crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
 38	crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
 2	crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
@@ -76,4 +76,4 @@
 229	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
 6	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
 52	crates/common/xai-tool-types/src/task.rs
-3090	TOTAL
+2829	TOTAL
