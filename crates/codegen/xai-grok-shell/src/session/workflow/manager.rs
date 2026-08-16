@@ -115,31 +115,44 @@ impl WorkflowManager {
         self.tracker.clone()
     }
 
-    pub(crate) async fn launch(
+    pub(crate) fn launch(
         &mut self,
         resolved: ResolvedWorkflow,
         spec: LaunchSpec,
     ) -> Result<(String, oneshot::Receiver<WorkflowOutcome>), LaunchError> {
-        self.launch_inner(resolved, spec, true).await
+        self.launch_inner(resolved, spec, true)
     }
 
+    // Structured ACP: no chat completion turn; await retirement when resuming.
     pub(crate) async fn launch_without_completion_turn(
         &mut self,
         resolved: ResolvedWorkflow,
         spec: LaunchSpec,
     ) -> Result<(String, oneshot::Receiver<WorkflowOutcome>), LaunchError> {
-        self.launch_inner(resolved, spec, false).await
+        if let Some(run_id) = spec.resume_run_id.as_deref() {
+            self.await_retiring_run(run_id).await;
+        }
+        self.launch_inner(resolved, spec, false)
     }
 
-    async fn launch_inner(
+    // Slash/resume path with completion turns; await same-run retirement first.
+    pub(crate) async fn launch_resuming(
+        &mut self,
+        resolved: ResolvedWorkflow,
+        spec: LaunchSpec,
+    ) -> Result<(String, oneshot::Receiver<WorkflowOutcome>), LaunchError> {
+        if let Some(run_id) = spec.resume_run_id.as_deref() {
+            self.await_retiring_run(run_id).await;
+        }
+        self.launch_inner(resolved, spec, true)
+    }
+
+    fn launch_inner(
         &mut self,
         resolved: ResolvedWorkflow,
         spec: LaunchSpec,
         enqueue_completion_turn: bool,
     ) -> Result<(String, oneshot::Receiver<WorkflowOutcome>), LaunchError> {
-        if let Some(run_id) = spec.resume_run_id.as_deref() {
-            self.await_retiring_run(run_id).await;
-        }
         self.reap_terminal_runs();
         if self.active.len().saturating_add(self.retiring.len())
             >= WORKFLOW_MAX_ACTIVE_RUNS_PER_SESSION
@@ -1029,7 +1042,7 @@ mod tests {
             "let meta = #{ name: \"t\", description: \"d\" };\ncomplete(\"done\");".into(),
         )
         .unwrap();
-        let (run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
+        let (run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
 
         let outcome = outcome_rx.await.unwrap();
         assert!(matches!(outcome, WorkflowOutcome::Completed { .. }));
@@ -1078,7 +1091,6 @@ mod tests {
         let script = "let meta = #{ name: \"t\", description: \"d\" };\nawait_user(\"user\", \"pause\");\ncomplete(\"original\");";
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
-            .await
             .unwrap();
         assert!(matches!(
             outcome_rx.await.unwrap(),
@@ -1102,7 +1114,6 @@ mod tests {
                     ..spec()
                 },
             )
-            .await
             .unwrap();
         match outcome_rx.await.unwrap() {
             WorkflowOutcome::Completed { result } => {
@@ -1172,7 +1183,7 @@ mod tests {
 
         let (retiring_tx, retiring_rx) = oneshot::channel();
         manager.retiring.push((run_id.clone(), retiring_rx));
-        let mut resume = Box::pin(manager.launch(
+        let mut resume = Box::pin(manager.launch_resuming(
             resolve_inline(script.into()).unwrap(),
             LaunchSpec {
                 resume_run_id: Some(run_id.clone()),
@@ -1212,7 +1223,7 @@ mod tests {
         let (mut manager, mut subagent_rx) = test_manager(Some(dir.path().to_path_buf()));
         let script = "let meta = #{ name: \"t\", description: \"d\" };\nlet r = agent(\"work\");\ncomplete(r.output);";
         let resolved = resolve_inline(script.into()).unwrap();
-        let (run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
+        let (run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
 
         use xai_grok_tools::implementations::grok_build::task::types::SubagentEvent;
         let spawn_req = subagent_rx.recv().await.expect("spawn request");
@@ -1243,7 +1254,6 @@ mod tests {
                     ..spec()
                 },
             )
-            .await
             .unwrap();
         let spawn_req = subagent_rx.recv().await.expect("respawned agent");
         use xai_grok_tools::implementations::grok_build::task::types::SubagentResult;
@@ -1278,7 +1288,6 @@ mod tests {
         let script = "let meta = #{ name: \"t\", description: \"d\" };\nlet r = agent(\"work\");\ncomplete(r.output);";
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
-            .await
             .unwrap();
 
         let SubagentEvent::Spawn(_first) = subagent_rx.recv().await.expect("first spawn") else {
@@ -1309,7 +1318,6 @@ mod tests {
                     ..spec()
                 },
             )
-            .await
             .unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("respawned agent") else {
             panic!("expected respawn event");
@@ -1343,7 +1351,6 @@ mod tests {
                       complete(content);";
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
-            .await
             .unwrap();
         match outcome_rx.await.unwrap() {
             WorkflowOutcome::Failed { error } => {
@@ -1379,7 +1386,6 @@ mod tests {
                     ..spec()
                 },
             )
-            .await
             .unwrap();
         match outcome_rx.await.unwrap() {
             WorkflowOutcome::Completed { result } => {
@@ -1414,7 +1420,6 @@ mod tests {
         let script = "let meta = #{ name: \"t\", description: \"d\" };\nlet a = agent(\"step one\");\ncomplete(a.output);";
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
-            .await
             .unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("first spawn") else {
             panic!("expected spawn event");
@@ -1451,7 +1456,6 @@ mod tests {
                         ..spec()
                     },
                 )
-                .await
                 .unwrap_err();
             manager.tracker = original_tracker;
             assert!(
@@ -1512,7 +1516,7 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        let (_run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
+        let (_run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
 
         let spawn_req = subagent_rx.recv().await.expect("spawn event");
         let SubagentEvent::Spawn(req) = spawn_req else {
@@ -1553,14 +1557,12 @@ mod tests {
         for _ in 0..WORKFLOW_MAX_ACTIVE_RUNS_PER_SESSION {
             let (_, outcome) = manager
                 .launch(resolve_inline(script.into()).unwrap(), spec())
-                .await
                 .unwrap();
             outcomes.push(outcome);
             spawned.push(subagent_rx.recv().await.expect("spawn event"));
         }
         let error = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
-            .await
             .unwrap_err();
         assert!(matches!(error, LaunchError::TooManyActiveRuns));
         drop(spawned);
@@ -1589,7 +1591,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            manager.launch(resolved, spec()).await.unwrap_err(),
+            manager.launch(resolved, spec()).unwrap_err(),
             LaunchError::TooManyActiveRuns
         ));
 
@@ -1617,7 +1619,7 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        let (_run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
+        let (_run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
 
         match outcome_rx.await.unwrap() {
             WorkflowOutcome::Failed { error } => {
@@ -1655,7 +1657,6 @@ mod tests {
                     ..spec()
                 },
             )
-            .await
             .unwrap();
 
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("first spawn") else {
@@ -1737,7 +1738,6 @@ mod tests {
                     ..spec()
                 },
             )
-            .await
             .unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
             panic!("expected spawn");
@@ -1776,7 +1776,7 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        let (_run_id, _outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
+        let (_run_id, _outcome_rx) = manager.launch(resolved, spec()).unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
             panic!("expected spawn");
         };
@@ -1815,7 +1815,6 @@ mod tests {
                     ..spec()
                 },
             )
-            .await
             .unwrap();
         let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
             panic!("expected spawn");
@@ -1851,7 +1850,7 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        let (run_id, outcome_rx) = manager.launch(resolved, spec()).await.unwrap();
+        let (run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
 
         let spawn_req = subagent_rx.recv().await.expect("spawn event");
         let SubagentEvent::Spawn(req) = spawn_req else {
@@ -1890,7 +1889,6 @@ mod tests {
         manager.test_set_max_concurrent_agents(CAP);
         let (_run_id, outcome_rx) = manager
             .launch(resolve_inline(parallel_n_script(N)).unwrap(), spec())
-            .await
             .unwrap();
 
         let mut live = Vec::new();
@@ -1927,7 +1925,6 @@ mod tests {
         manager.test_set_max_concurrent_agents(1);
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(parallel_n_script(4)).unwrap(), spec())
-            .await
             .unwrap();
 
         let first = recv_spawn(&mut subagent_rx).await;
