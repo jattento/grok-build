@@ -478,50 +478,47 @@ fn human_healthy_fixture_is_exact() {
 fn human_mixed_fixture_is_exact() {
     assert_eq!(
         human::format(&mixed_report()),
-        format!(
-            concat!(
-                "Grok Doctor\n",
-                "\n",
-                "Environment\n",
-                "  · terminal                     Ghostty\n",
-                "  · terminal version             Ghostty 1.2.3\n",
-                "  · multiplexer                  tmux\n",
-                "  · byobu                        tmux\n",
-                "  · ssh                          yes\n",
-                "  · color                        256\n",
-                "  · themes                       2/{}: groknight, grokday\n",
-                "  · keyboard                     cmd=dropped, opt=native (OS rescue active)\n",
-                "  · newline                      Alt+Enter (Cursor: xterm.js cannot distinguish Shift+Enter)\n",
-                "\n",
-                "Clipboard\n",
-                "  · native                       local (pbcopy)\n",
-                "  · tmux                         on\n",
-                "  · osc 52                       supported\n",
-                "  · SSH wrap                     off\n",
-                "  · status                       confirmed\n",
-                "\n",
-                "Findings\n",
-                "  ! terminal.tmux-clipboard      OSC 52 clipboard passthrough is disabled\n",
-                "    → Automatic setup: `grok doctor fix tmux-clipboard`\n",
-                "    → Add `set -g set-clipboard on` to ~/.tmux.conf\n",
-                "      Reload tmux after editing.\n",
-                "  i terminal.ssh-wrap            Use local SSH wrapping\n",
-                "    → Automatic setup: `grok doctor fix ssh-wrap`\n",
-                "    → One-off: `grok wrap ssh <host>`\n",
-                "\n",
-                "Checks not completed\n",
-                "  ? tmux.version                 unavailable\n",
-                "  ? tmux.extended-keys           unavailable\n",
-                "  ? tmux.allow-passthrough-support unsupported\n",
-                "  ? runtime.fullscreen-active    unavailable\n",
-                "  ? tmux.control-mode            error: server unavailable\n",
-                "\n",
-                "Needs a running session\n",
-                "  Some checks only run in Grok. Start Grok and run /doctor.\n",
-                "\n",
-                "1 issue, 1 recommendation\n",
-            ),
-            ThemeKind::ALL.len(),
+        concat!(
+            "Grok Doctor\n",
+            "\n",
+            "Environment\n",
+            "  · terminal                     Ghostty\n",
+            "  · terminal version             Ghostty 1.2.3\n",
+            "  · multiplexer                  tmux\n",
+            "  · byobu                        tmux\n",
+            "  · ssh                          yes\n",
+            "  · color                        256\n",
+            "  · themes                       2/7: groknight, grokday\n",
+            "  · keyboard                     cmd=dropped, opt=native (OS rescue active)\n",
+            "  · newline                      Alt+Enter (Cursor: xterm.js cannot distinguish Shift+Enter)\n",
+            "\n",
+            "Clipboard\n",
+            "  · native                       local (pbcopy)\n",
+            "  · tmux                         on\n",
+            "  · osc 52                       supported\n",
+            "  · SSH wrap                     off\n",
+            "  · status                       confirmed\n",
+            "\n",
+            "Findings\n",
+            "  ! terminal.tmux-clipboard      OSC 52 clipboard passthrough is disabled\n",
+            "    → Automatic setup: `grok doctor fix tmux-clipboard`\n",
+            "    → Add `set -g set-clipboard on` to ~/.tmux.conf\n",
+            "      Reload tmux after editing.\n",
+            "  i terminal.ssh-wrap            Use local SSH wrapping\n",
+            "    → Automatic setup: `grok doctor fix ssh-wrap`\n",
+            "    → One-off: `grok wrap ssh <host>`\n",
+            "\n",
+            "Checks not completed\n",
+            "  ? tmux.version                 unavailable\n",
+            "  ? tmux.extended-keys           unavailable\n",
+            "  ? tmux.allow-passthrough-support unsupported\n",
+            "  ? runtime.fullscreen-active    unavailable\n",
+            "  ? tmux.control-mode            error: server unavailable\n",
+            "\n",
+            "Needs a running session\n",
+            "  Some checks only run in Grok. Start Grok and run /doctor.\n",
+            "\n",
+            "1 issue, 1 recommendation\n",
         )
     );
 }
@@ -691,7 +688,7 @@ fn json_empty_fixture_pins_null_policy() {
                 "color": {
                     "level": {"status": "unavailable", "value": null},
                     "availableThemes": [],
-                    "totalThemes": ThemeKind::ALL.len()
+                    "totalThemes": 7
                 },
                 "keyboard": null,
                 "newline": null,
@@ -739,7 +736,7 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
                 "color": {
                     "level": {"status": "available", "value": "256"},
                     "availableThemes": ["groknight", "grokday"],
-                    "totalThemes": ThemeKind::ALL.len()
+                    "totalThemes": 7
                 },
                 "keyboard": {"cmd": "dropped", "opt": "native", "os": "macos"},
                 "newline": {"kind": "xterm_js", "terminalName": "cursor"},
@@ -1050,4 +1047,23 @@ fn output_writer_errors_propagate() {
 
     assert!(write_report(&healthy_report(), false, &mut BrokenWriter).is_err());
     assert!(write_report(&healthy_report(), true, &mut BrokenWriter).is_err());
+}
+
+/// Exact doctor theme-count fixtures hardcode `7` / `2/7`. Pin the enum itself
+/// so an accidental ALL add/remove/duplicate fails independently of those
+/// fixtures (and of production code that also reads `ThemeKind::ALL`).
+#[test]
+fn theme_kind_all_contains_exactly_the_seven_variants() {
+    assert_eq!(
+        ThemeKind::ALL,
+        &[
+            ThemeKind::GrokNight,
+            ThemeKind::GrokDay,
+            ThemeKind::TokyoNight,
+            ThemeKind::RosePineMoon,
+            ThemeKind::OscuraMidnight,
+            ThemeKind::ItermGreen,
+            ThemeKind::CodexDark,
+        ]
+    );
 }

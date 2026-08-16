@@ -6,6 +6,7 @@
 //!
 //! See `AGENTS.md` at the repo root and `overlay/TOUCHPOINTS.md`.
 
+pub mod affordance;
 pub mod themes;
 
 /// Version of the overlay itself, independent from the upstream grok version.
