@@ -1,0 +1,25 @@
+# Sanctioned adapters: whole files we authored that sit outside overlay/.
+#
+# Hard rule: a whole file we author lives in overlay/. The only exception is a
+# thin adapter that *must* sit inside an upstream module tree because ACP
+# dispatch (or similar) enters through a closed match and the types it needs
+# are shell-private. That exception is fenced by three conditions enforced
+# together by overlay/scripts/overlay-diff.sh — every one is required:
+#
+#   1. Naming. Basename must start with overlay_ (mirrors the overlay-* crate
+#      prefix). Prevents path collision with a future upstream snapshot; the
+#      old extensions/workflows.rs was dangerous precisely because upstream
+#      already owns the workflows surface.
+#   2. Listed. The path must appear in this file.
+#   3. Budgeted. The path must have a line entry in overlay/delta-budget.tsv
+#      so an adapter cannot quietly grow into business logic.
+#
+# An A path outside overlay/ that fails any of the three is a hard failure.
+# Naming is not waivable: listing a non-overlay_* path does nothing.
+#
+# If a listed path no longer appears as Added against upstream/main, the gate
+# fails until you remove its line — this list must not rot.
+#
+# One path per line. Blank lines and # comments are ignored.
+
+crates/codegen/xai-grok-shell/src/extensions/overlay_workflows.rs
