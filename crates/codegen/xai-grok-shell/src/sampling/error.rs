@@ -105,23 +105,25 @@ pub const OVERLOADED_USER_MESSAGE: &str = "Model is temporarily overloaded. Try 
 pub(crate) fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
     use reqwest::StatusCode;
     let retryable_provider_failure = err.is_retryable() && !err.is_retry_vetoed();
-    // Capacity/overload gets the same short copy on every surface. Preserve the
-    // structured retry marker for internal callers without exposing raw model
-    // output or relying on rendered-text substring matching.
-    if retryable_provider_failure && err.is_overloaded() {
-        return acp::Error::new(
-            acp::ErrorCode::InternalError.into(),
-            OVERLOADED_USER_MESSAGE,
+    // Capacity/overload gets the same short copy on every surface. Message
+    // only, `data` deliberately unset: `Display` appends JSON-encoded `data`,
+    // and this string is meant for direct display.
+    // Retryability is recorded independently after the upstream mapping.
+    if err.is_overloaded() {
+        return annotate_retryable_provider_failure(
+            acp::Error::new(
+                acp::ErrorCode::InternalError.into(),
+                OVERLOADED_USER_MESSAGE,
+            ),
+            retryable_provider_failure,
         );
     }
-    match err {
+    let acp_err = match err {
         SamplingError::Auth { message, .. } => acp::Error::auth_required().data(message),
         SamplingError::InvalidConfiguration(msg) => acp::Error::invalid_params().data(msg),
-        SamplingError::Http(e) => acp::Error::internal_error().data(provider_error_data(
-            format!("http client init failed: {e}"),
-            None,
-            retryable_provider_failure,
-        )),
+        SamplingError::Http(e) => {
+            acp::Error::internal_error().data(format!("http client init failed: {e}"))
+        }
         SamplingError::Serialization(_) => acp::Error::invalid_params().data(err.to_string()),
         SamplingError::Api {
             status, message, ..
@@ -153,43 +155,26 @@ pub(crate) fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
             StatusCode::NOT_FOUND => acp::Error::resource_not_found(None).data(message),
             StatusCode::PAYLOAD_TOO_LARGE => acp::Error::invalid_params().data(message),
             StatusCode::TOO_MANY_REQUESTS => {
-                acp::Error::new(RATE_LIMITED_ERROR_CODE, "Rate limited".to_string()).data(
-                    provider_error_data(message, Some(status.as_u16()), retryable_provider_failure),
-                )
+                acp::Error::new(RATE_LIMITED_ERROR_CODE, "Rate limited".to_string()).data(message)
             }
-            // Preserve HTTP status plus canonical retryability for internal
-            // provider failover and downstream rate-limit classification.
-            _ => acp::Error::internal_error().data(provider_error_data(
-                message,
-                Some(status.as_u16()),
-                retryable_provider_failure,
-            )),
+            // Preserve the HTTP status in data so the classifier folds capacity
+            // errors (503/529) into `rate_limit`.
+            _ => acp::Error::internal_error()
+                .data(error_data_with_status(message, Some(status.as_u16()))),
         },
-        SamplingError::EventStreamError(message) => acp::Error::internal_error().data(
-            provider_error_data(message, None, retryable_provider_failure),
-        ),
+        SamplingError::EventStreamError(message) => acp::Error::internal_error().data(message),
         SamplingError::StreamError {
             error_type,
             message,
             ..
-        } => acp::Error::internal_error().data(provider_error_data(
-            format!("{error_type}: {message}"),
-            None,
-            retryable_provider_failure,
+        } => acp::Error::internal_error().data(format!("{error_type}: {message}")),
+        SamplingError::EmptyResponse { context } => acp::Error::internal_error().data(format!(
+            "empty response from model ({}): model={}, had_reasoning={}, finish_reason={}",
+            context.reason,
+            context.model,
+            context.had_reasoning,
+            context.finish_reason_str(),
         )),
-        SamplingError::EmptyResponse { context } => {
-            acp::Error::internal_error().data(provider_error_data(
-                format!(
-                    "empty response from model ({}): model={}, had_reasoning={}, finish_reason={}",
-                    context.reason,
-                    context.model,
-                    context.had_reasoning,
-                    context.finish_reason_str(),
-                ),
-                None,
-                retryable_provider_failure,
-            ))
-        }
         SamplingError::MaxTokensTruncation => {
             acp::Error::internal_error().data(terminal_error_data(
                 err.to_string(),
@@ -205,7 +190,24 @@ pub(crate) fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
         SamplingError::DoomLoopDetected { .. } => {
             acp::Error::internal_error().data(err.to_string())
         }
-    }
+    };
+    // Single annotation site: provider-failover marker lives in overlay.
+    annotate_retryable_provider_failure(acp_err, retryable_provider_failure)
+}
+
+fn annotate_retryable_provider_failure(
+    mut err: acp::Error,
+    retryable_provider_failure: bool,
+) -> acp::Error {
+    err.data = overlay_subagent_router::apply_retryable_provider_failure_marker(
+        err.data.take(),
+        &err.message,
+        i32::from(err.code),
+        RATE_LIMITED_ERROR_CODE,
+        OVERLOADED_USER_MESSAGE,
+        retryable_provider_failure,
+    );
+    err
 }
 
 pub(crate) fn error_data_with_status(
@@ -218,54 +220,28 @@ pub(crate) fn error_data_with_status(
     }
 }
 
-fn provider_error_data(
-    message: String,
-    http_status: Option<u16>,
-    retryable_provider_failure: bool,
-) -> serde_json::Value {
-    let mut data = serde_json::json!({
-        "message": message,
-        "retryable_provider_failure": retryable_provider_failure,
-    });
-    if let Some(status) = http_status {
-        data["http_status"] = serde_json::json!(status);
-    }
-    data
-}
-
+/// Attach a provider-failover retry marker for the private subagent boundary.
 pub fn with_retryable_provider_failure(
     mut err: acp::Error,
     retryable_provider_failure: bool,
 ) -> acp::Error {
-    let data = match err.data.take() {
-        Some(serde_json::Value::Object(mut data)) => {
-            data.insert(
-                "retryable_provider_failure".to_string(),
-                retryable_provider_failure.into(),
-            );
-            serde_json::Value::Object(data)
-        }
-        Some(serde_json::Value::String(message)) => {
-            provider_error_data(message, None, retryable_provider_failure)
-        }
-        Some(data) => serde_json::json!({
-            "detail": data,
-            "retryable_provider_failure": retryable_provider_failure,
-        }),
-        None => provider_error_data(err.message.clone(), None, retryable_provider_failure),
-    };
-    err.data = Some(data);
+    err.data = Some(overlay_subagent_router::merge_retryable_provider_failure(
+        err.data.take(),
+        &err.message,
+        retryable_provider_failure,
+    ));
     err
 }
 
+/// Whether an ACP error should trigger subagent provider failover.
 pub fn is_retryable_provider_failure(err: &acp::Error) -> bool {
-    err.message == OVERLOADED_USER_MESSAGE
-        || err
-            .data
-            .as_ref()
-            .and_then(|data| data.get("retryable_provider_failure"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
+    overlay_subagent_router::is_retryable_provider_failure(
+        err.data.as_ref(),
+        &err.message,
+        i32::from(err.code),
+        RATE_LIMITED_ERROR_CODE,
+        OVERLOADED_USER_MESSAGE,
+    )
 }
 
 /// Terminal-failure `acp::Error.data`: max-tokens truncation carries an `error_kind` marker (the kind's stable `as_str` name); other kinds keep the legacy shape.
@@ -577,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn overload_maps_to_display_message_and_remains_retryable() {
+    fn overload_maps_to_display_message_without_data() {
         let err = SamplingError::StreamError {
             error_type: "overloaded_error".into(),
             message: "Overloaded".into(),
@@ -586,6 +562,8 @@ mod tests {
         let acp_err = map_sampling_err_to_acp(err);
         assert_eq!(acp_err.code, acp::ErrorCode::InternalError);
         assert_eq!(acp_err.message, OVERLOADED_USER_MESSAGE);
+        // Display appends JSON-encoded `data`; direct-display copy must not
+        // carry any.
         assert_eq!(acp_err.data, None);
         assert!(is_retryable_provider_failure(&acp_err));
 
@@ -617,8 +595,8 @@ mod tests {
         assert_eq!(acp_err.code, acp::ErrorCode::from(RATE_LIMITED_ERROR_CODE));
         assert_eq!(acp_err.message, "Rate limited");
         assert_eq!(
-            error_detail_from_data(acp_err.data.as_ref().expect("rate-limit data")).as_deref(),
-            Some("Rate limit exceeded")
+            acp_err.data,
+            Some(serde_json::Value::String("Rate limit exceeded".into()))
         );
         assert!(is_retryable_provider_failure(&acp_err));
     }
@@ -656,6 +634,8 @@ mod tests {
             should_retry: Some(false),
             error_code: None,
         });
+        // Display copy stays the stable overload string; retryability is false.
+        assert_eq!(header_veto.message, OVERLOADED_USER_MESSAGE);
         assert!(!is_retryable_provider_failure(&header_veto));
 
         let context_veto = map_sampling_err_to_acp(SamplingError::Api {
@@ -668,7 +648,7 @@ mod tests {
         });
         assert!(!is_retryable_provider_failure(&context_veto));
 
-        let empty = map_sampling_err_to_acp(SamplingError::EmptyResponse {
+        let empty_src = SamplingError::EmptyResponse {
             context: xai_grok_sampling_types::EmptyResponseContext {
                 reason: xai_grok_sampling_types::EmptyReason::NoVisibleContent,
                 had_reasoning: false,
@@ -681,8 +661,34 @@ mod tests {
                 model: "test".into(),
                 first_choice_seen: false,
             },
-        });
-        assert!(is_retryable_provider_failure(&empty));
+        };
+        assert!(empty_src.is_retryable() && !empty_src.is_retry_vetoed());
+        let empty = map_sampling_err_to_acp(empty_src);
+        // Public map keeps upstream plain-string data (Display-safe).
+        assert!(matches!(empty.data, Some(serde_json::Value::String(_))));
+        // Private subagent boundary stamps the marker when replaying failover.
+        let marked_empty = with_retryable_provider_failure(empty, true);
+        assert!(is_retryable_provider_failure(&marked_empty));
+    }
+
+    #[test]
+    fn service_unavailable_maps_retryable_marker_on_status_object() {
+        let err = SamplingError::Api {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "at capacity".into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+            error_code: None,
+        };
+        assert!(err.is_retryable() && !err.is_retry_vetoed());
+        let acp_err = map_sampling_err_to_acp(err);
+        assert_eq!(http_status_from_error(&acp_err), Some(503));
+        assert!(is_retryable_provider_failure(&acp_err));
+        assert_eq!(
+            error_detail_from_data(acp_err.data.as_ref().expect("503 data")).as_deref(),
+            Some("at capacity")
+        );
     }
 
     #[test]

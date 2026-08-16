@@ -149,13 +149,13 @@ Template for new entries:
 
 ### `crates/codegen/xai-grok-shell/src/sampling/error.rs`
 
-- What: adds helpers that preserve the canonical sampling retryability decision
-  as a structured ACP error-data marker for subagent provider failover, while
-  retaining existing user-facing error formats and excluding retry vetoes.
-- Why here: this is the shared ACP error-data boundary; the child runner
-  otherwise sees only rendered error text and cannot distinguish transient
-  failures from idle timeouts, context overflow, or a server
-  `x-should-retry: false` veto.
+- What: after the upstream `SamplingError` → ACP map, stamps provider-failover
+  retryability via `overlay-subagent-router` marker helpers (thin wrappers
+  `with_retryable_provider_failure` / `is_retryable_provider_failure`). Match
+  arms stay upstream-shaped; overload display depends only on `is_overloaded()`.
+- Why here: the child runner sees ACP errors, not `SamplingError`, and must
+  distinguish transient provider failures from idle timeouts, context overflow,
+  or `x-should-retry: false` without substring matching rendered text.
 - Retire when: ACP exposes typed sampling retryability directly to child turns.
 
 ### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs`
@@ -375,11 +375,12 @@ Covers `crates/codegen/xai-grok-markdown/src/output.rs`,
 ### `crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs`
 
 - What: generalizes the affordance row from Mermaid-only to every copyable
-  markdown block. Adds `AffordanceSubject` (`Mermaid` / `Code(lang)` / `Table`),
-  `AffordanceKind::Copy`, a `CopyBlock` record, and turns `affordance_row` into
-  `affordance_row(subject, rendering)` with a `Vec<AffordanceButton>` and a
-  `Cow` label. Mermaid's label, buttons, columns and status are unchanged and
-  pinned by the existing tests.
+  markdown block. Subject/kind/label policy and its tests live in
+  `overlay/overlay-core/src/affordance.rs`; this file re-exports
+  `AffordanceSubject` / `AffordanceKind`, keeps `CopyBlock` /
+  `DiagramAffordance` / column layout / `apply_affordance_rows`, and translates
+  overlay policy into `AffordanceButton { col, .. }`. Mermaid's label, buttons,
+  columns and status are unchanged and pinned by the existing layout tests.
 - Why here: the row-insertion, layout and hit-rect machinery already lives in
   this file and is the single source of truth shared with the painter. Wrapping
   it from `overlay/` would mean duplicating that layout and reintroducing exactly
@@ -424,19 +425,22 @@ Covers `crates/codegen/xai-grok-pager/src/scrollback/render.rs`,
 
 ### `crates/codegen/xai-grok-pager/src/diagnostics/doctor_format_tests.rs`
 
-- What: derives the limited-color theme-count denominator from
-  `ThemeKind::ALL` instead of hardcoding upstream's five themes.
-- Why here: the fork's two extra themes legitimately change the denominator,
-  while the available limited-color themes remain unchanged.
-- Retire when: upstream makes this expectation dynamic.
+- What: one literal in the limited-color human fixture: themes denominator
+  `2/5` → `2/7` for the fork's two extra themes.
+- Why here: the fixture pins exact doctor output; the fork's themes change only
+  the total count.
+- Retire when: upstream makes this expectation dynamic, or drops exact-output
+  fixtures for theme totals.
 
 ### `crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs`
 
-- What: derives human and JSON theme-count expectations from `ThemeKind::ALL`
-  instead of hardcoding upstream's five themes.
-- Why here: the fork's two extra themes legitimately change the denominator,
-  and these contract fixtures must follow the enum used by their inputs.
-- Retire when: upstream makes these expectations dynamic.
+- What: three literals in the human/JSON doctor fixtures (`2/5` → `2/7`,
+  `"totalThemes": 5` → `7`) plus a separate pin that `ThemeKind::ALL` is exactly
+  the seven expected variants.
+- Why here: the fixtures pin exact doctor output; the ALL test covers enum
+  churn without making those fixtures self-referential.
+- Retire when: upstream makes these expectations dynamic, or drops exact-output
+  fixtures for theme totals.
 
 ### `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs`
 

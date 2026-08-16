@@ -156,15 +156,17 @@ impl AgentView {
         Some(format!("{transmit_esc}{place_esc}"))
     }
 
-    /// Paint each visible copyable-markdown affordance row and register its
-    /// click hit-rects. Mermaid retains its three render/copy actions; ordinary
-    /// fences and tables carry one source-only `[Copy]` action.
+    /// Paint each visible Mermaid affordance row (`◇ mermaid [Open Image]
+    /// [Copy Image Path] [Copy Source]`) and register its click hit-rects.
+    /// Ordinary code fences and tables share this path with a source-only
+    /// `[Copy]` action.
     ///
-    /// The leading subject label is a dim, non-clickable marker. Every button is
-    /// always clickable; a button whose hit-rect is under the mouse is
-    /// highlighted, the rest are dim. Only Mermaid may show a trailing dim
-    /// `rendering…` hint while an on-click render is in flight. The whole layout
-    /// (label + button + hint columns) comes from
+    /// The leading `◇ mermaid` label is a dim, non-clickable marker. Every button
+    /// is always clickable (`[Open]`/`[Copy path]` render lazily on click); a
+    /// button whose hit-rect is under the mouse is highlighted, the rest are dim.
+    /// A trailing dim `rendering…` hint follows the buttons while an on-click
+    /// render for that diagram is in flight. The whole layout (label + button +
+    /// hint columns) comes from
     /// [`affordance_row`](crate::scrollback::blocks::mermaid_content::affordance_row)
     /// so the painted labels and the hit-rects can't drift, and each segment is
     /// clipped to `screen_rect.width` (which excludes the timestamp reserve).
@@ -185,8 +187,8 @@ impl AgentView {
                 source,
                 subject,
             } = aff;
-            // Hash/render-state lookup is Mermaid-only; code/table rows cannot
-            // render and therefore never show the transient status hint.
+            // The transient `rendering…` hint shows only while an on-click render
+            // for this diagram is in flight (code/table subjects never render).
             let rendering = matches!(
                 &subject,
                 crate::scrollback::blocks::mermaid_content::AffordanceSubject::Mermaid
@@ -198,7 +200,7 @@ impl AgentView {
             let fits =
                 |col: u16, label: &str| col + UnicodeWidthStr::width(label) as u16 <= rect.width;
 
-            // Leading dim, non-clickable subject label.
+            // Leading dim, non-clickable `◇ mermaid` label.
             let (label_col, label_text) = row.label;
             if fits(label_col, label_text.as_ref()) {
                 buf.set_string_safe(
@@ -209,7 +211,7 @@ impl AgentView {
                 );
             }
 
-            // Register the block's source once — moved, not cloned (the
+            // Register the diagram's source once — moved, not cloned (the
             // placement is owned and used only here) — when at least one button
             // fits; every fitting button below indexes into it for click routing.
             let source_idx = if row.buttons.iter().any(|b| fits(b.col, b.label)) {
@@ -502,9 +504,10 @@ impl AgentView {
             return Some(InputOutcome::Changed);
         }
 
-        // Markdown affordance row → Mermaid render-on-click (Open/Copy path)
-        // or source copy. Resolve the kind + source index first so the legacy
-        // `mermaid_buttons` borrow ends before the `&mut self` dispatch below.
+        // Mermaid affordance row → render-on-click (Open/Copy path) or copy
+        // source (also code/table `[Copy]`). Resolve the kind + source index
+        // first so the `mermaid_buttons` borrow ends before the `&mut self`
+        // dispatch below.
         let mermaid_hit = self
             .inline_media_hits
             .mermaid_buttons
@@ -525,11 +528,11 @@ impl AgentView {
         None
     }
 
-    /// Route a copyable-markdown affordance click. `[Copy]` and Mermaid's
-    /// `[Copy source]` need no render; `[Open]`/`[Copy path]` render Mermaid
-    /// lazily at the live theme/width and then open the PNG / copy its path.
-    /// `source` is moved into the renderer, never cloned. `copy_to_clipboard`
-    /// owns every source-copy toast.
+    /// Route a Mermaid affordance-row click. `[Copy source]` copies the diagram
+    /// source (no render); `[Open]`/`[Copy path]` render it lazily at the live
+    /// theme/width and then open the PNG / copy its path. `source` is moved into
+    /// the renderer, never cloned. `copy_to_clipboard` owns the copy toast.
+    /// `[Copy]` (code/table) also copies source with no render.
     fn on_mermaid_affordance_click(
         &mut self,
         kind: crate::scrollback::blocks::mermaid_content::AffordanceKind,

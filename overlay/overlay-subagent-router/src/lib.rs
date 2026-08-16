@@ -8,6 +8,7 @@ mod config;
 mod decision;
 mod fallback;
 mod notify;
+mod provider_marker;
 mod sensor;
 mod windows;
 
@@ -24,6 +25,11 @@ pub use decision::{
 pub use fallback::{
     ProviderRetryDecision, configured_provider_retry_plan, next_provider_retry, provider_for_model,
     provider_retry_error,
+};
+pub use provider_marker::{
+    RETRYABLE_PROVIDER_FAILURE_KEY, apply_retryable_provider_failure_marker,
+    is_retryable_provider_failure, merge_retryable_provider_failure,
+    retryable_provider_failure_from_data,
 };
 pub use notify::{
     Notifier, OsascriptNotifier, SpyNotifier, notify_override, notify_provider_error,

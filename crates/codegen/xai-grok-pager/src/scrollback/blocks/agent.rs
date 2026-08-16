@@ -92,8 +92,7 @@ impl AgentMessageBlock {
         self.image_refs = crate::prompt_images::extract_image_refs(&text);
         self.video_refs = crate::prompt_images::extract_video_refs(&text);
         // Detection runs once the render is final, after the renderer freezes —
-        // never per streaming chunk. The broad copy-block bit guards the common
-        // prose-only frame path; Mermaid keeps its separate render-worker index.
+        // never per streaming chunk.
         self.mermaid = self.content.mermaid_content();
         self.copy_block_counts = self.content.copy_block_counts();
     }
@@ -133,11 +132,11 @@ impl AgentMessageBlock {
 }
 
 impl AgentMessageBlock {
-    /// Resolve the two independent affordance gates without building output.
-    /// Minimal/static mode has no draw loop, so it suppresses every row (a
-    /// reserved blank line would otherwise be committed inert). Outside minimal,
-    /// the Mermaid setting controls Mermaid rows only; code/table copy rows stay
-    /// available even when `render_mermaid = off`.
+    /// Resolve the diagram display mode from the user setting without building
+    /// `output()` — cheap enough to gate the per-frame affordance path. Returns
+    /// `(any_rows_possible, mermaid_rows)`: minimal/static suppresses every row
+    /// (no draw loop); outside minimal, code/table copy rows stay available even
+    /// when `render_mermaid = off`.
     fn affordance_policy(&self) -> (bool, bool) {
         let static_commit = crate::terminal::image::scrollback_inline_overlay_forced_off();
         let mermaid_rows = mermaid_content::mermaid_display_static(
@@ -147,19 +146,19 @@ impl AgentMessageBlock {
         (!static_commit, mermaid_rows)
     }
 
-    /// Build the block's output and copyable-markdown affordance rows together
-    /// so the inserted rows and their anchored placements always come from the
-    /// same document-ordered block list.
+    /// Build the block's output and the diagram affordance rows together so the
+    /// inserted rows (in the output) and the anchored placements (their offsets)
+    /// are always derived from the same layout. Also covers code/table copy rows
+    /// from the same document-ordered block list.
     ///
     /// [`output`](Self::output) and [`diagram_affordances`](Self::diagram_affordances)
-    /// each call this independently (so it runs twice per frame for a message
-    /// containing copyable blocks); it is deterministic for a given `ctx`, so
-    /// both calls produce matching rows + offsets without a shared cache that
-    /// could drift.
+    /// each call this independently (so it runs twice per frame for a diagram
+    /// message); it is deterministic for a given `ctx`, so the two calls produce
+    /// matching rows + offsets without a shared cache that could drift.
     ///
-    /// Only callers that have already confirmed there are copyable blocks, that
-    /// rows can be painted, and that raw mode is off should reach here; prose-only
-    /// messages remain on the cached markdown fast path.
+    /// Only callers that have already confirmed there are diagrams and we are
+    /// not in raw mode should reach here (so the common diagram-free path never
+    /// pays this build). Copyable code/table blocks use the same gate.
     fn rendered_output(
         &self,
         ctx: &BlockContext,
@@ -188,8 +187,9 @@ impl AgentMessageBlock {
 
 impl BlockContent for AgentMessageBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
-        // Common path: prose-only, raw, or static/minimal output → cached
-        // markdown with no affordance block scan and no extra rebuild.
+        // Common path: no diagrams (or raw mode) → plain markdown, no affordance
+        // machinery and no extra output rebuild. Also covers prose-only and
+        // static/minimal (no paint loop for reserved rows).
         if ctx.raw || self.copy_block_counts.0 == 0 || !self.affordance_policy().0 {
             return self.content.output(ctx.width as usize);
         }
@@ -197,9 +197,10 @@ impl BlockContent for AgentMessageBlock {
     }
 
     fn diagram_affordances(&self, ctx: &BlockContext) -> Vec<mermaid_content::DiagramAffordance> {
-        // The draw-loop placement path is meaningful only for finished
-        // copyable blocks in interactive pretty mode. Mermaid-off filtering is
-        // deliberately left to `rendered_output`: code/table rows still exist.
+        // Affordance rows exist only under the affordance display with diagrams;
+        // for every other (much more common) case, return without building
+        // output(). Mermaid-off filtering is left to `rendered_output` so
+        // code/table rows still exist when diagrams are suppressed.
         if ctx.raw || self.copy_block_counts.0 == 0 || !self.affordance_policy().0 {
             return Vec::new();
         }
@@ -207,11 +208,12 @@ impl BlockContent for AgentMessageBlock {
     }
 
     fn estimate_extra_rows(&self) -> u16 {
-        // Every row inserted inside `output()` is invisible to the source-text
-        // height estimate. Count exactly the rows allowed by the same gates so
-        // off-screen layout never under-reserves; saturating at u16::MAX is safer
-        // than wrapping for a pathological message with tens of thousands of
-        // blocks.
+        // Each detected diagram inserts one treatment row (affordance row or
+        // fallback caption) into output() that the source-text estimate can't
+        // see. Count one per diagram (a safe over-estimate if a range is empty)
+        // so the off-screen estimate never under-reserves; raw mode and the
+        // `off` setting add no such row. Code/table copy rows use the same
+        // count with the live affordance gates applied.
         let (total, mermaid) = self.copy_block_counts;
         if total == 0 || self.content.is_raw() {
             return 0;

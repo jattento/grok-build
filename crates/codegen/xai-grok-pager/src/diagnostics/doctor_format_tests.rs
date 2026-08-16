@@ -14,7 +14,7 @@ use crate::host::HostOs;
 use crate::terminal::{
     ByobuBackend, ModifierDelivery, ModifierFate, MultiplexerKind, TerminalContext, TerminalName,
 };
-use crate::theme::{ThemeKind, color_support::ColorLevel};
+use crate::theme::color_support::ColorLevel;
 
 static LOCAL_ROUTE: ClipboardRoute = ClipboardRoute {
     native: true,
@@ -234,29 +234,26 @@ fn limited_color_output_is_stable() {
 
     assert_eq!(
         output,
-        format!(
-            concat!(
-                "Environment\n",
-                "  terminal     Ghostty\n",
-                "  multiplexer  None detected\n",
-                "  ssh          no\n",
-                "  color        256\n",
-                "  themes       2/{}: groknight, grokday\n",
-                "\n",
-                "Clipboard\n",
-                "  native       local (pbcopy)\n",
-                "  tmux         off\n",
-                "  osc 52       off\n",
-                "  wrap         off\n",
-                "  status       confirmed\n",
-                "\n",
-                "Issues (1)\n",
-                "\n",
-                "  ! terminal.limited-color  This terminal reports 256 color, so truecolor themes are unavailable\n",
-                "      Run: `export COLORTERM=truecolor`\n",
-                "      Note: Add this export to your shell startup file, such as `~/.zshrc` or `~/.bashrc`, then restart Grok.\n",
-            ),
-            ThemeKind::ALL.len(),
+        concat!(
+            "Environment\n",
+            "  terminal     Ghostty\n",
+            "  multiplexer  None detected\n",
+            "  ssh          no\n",
+            "  color        256\n",
+            "  themes       2/7: groknight, grokday\n",
+            "\n",
+            "Clipboard\n",
+            "  native       local (pbcopy)\n",
+            "  tmux         off\n",
+            "  osc 52       off\n",
+            "  wrap         off\n",
+            "  status       confirmed\n",
+            "\n",
+            "Issues (1)\n",
+            "\n",
+            "  ! terminal.limited-color  This terminal reports 256 color, so truecolor themes are unavailable\n",
+            "      Run: `export COLORTERM=truecolor`\n",
+            "      Note: Add this export to your shell startup file, such as `~/.zshrc` or `~/.bashrc`, then restart Grok.\n",
         )
     );
 }
