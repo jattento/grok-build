@@ -2538,7 +2538,7 @@ impl acp::Agent for MvpAgent {
                     .await
             }
             s if s.starts_with("x.ai/workflows/") => {
-                crate::extensions::workflows::handle(self, &args).await
+                crate::extensions::overlay_workflows::handle(self, &args).await
             }
             s if s.starts_with("x.ai/review") => {
                 crate::extensions::feedback::handle(self, &args).await
