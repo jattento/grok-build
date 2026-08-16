@@ -265,34 +265,28 @@ Template for new entries:
   models without it. Serde attributes have no config or overlay seam.
 - Retire when: upstream tolerates thinking blocks that carry only a signature.
 
-### `crates/codegen/xai-grok-pager-render/src/theme/iterm.rs`
+### `crates/codegen/xai-grok-pager-render/Cargo.toml`
 
-- What: a new file holding the `iterm-green` theme, an iTerm2 profile (green
-  `#76E765` on violet `#160C2A`) ported into the pager.
-- Why here: themes are built by `Theme` constructors that the render crate
-  dispatches internally; there is no registry an overlay package could add to.
-- Retire when: upstream accepts user-defined themes from config, which would
-  turn this into a `~/.grok` file and drop the delta to zero.
-
-### `crates/codegen/xai-grok-pager-render/src/theme/codexdark.rs`
-
-- What: a new file holding the `codex-dark` theme, ported verbatim from
-  Conan Code's own embedded Ghostty theme
-  (`Coinor/Resources/GhosttyOverrides.conf` in the `jattento/coinor` repo):
-  background `#181818`, accent `#339CFF`, warm-cream foreground `#FAF3DD`,
-  and its ANSI-16 diff/status ramp.
-- Why here: same as `theme/iterm.rs` above.
-- Retire when: same as above.
+- What: path dependency on `overlay-core`.
+- Why here: the dependency must be declared by the package that expands the
+  fork theme macros into `Theme` constructors.
+- Retire when: never, while this package constructs fork themes from
+  `overlay-core`.
 
 ### `crates/codegen/xai-grok-pager-render/src/theme/mod.rs`
 
 - What: registers both fork themes — `ThemeKind::ItermGreen = 6` and
-  `ThemeKind::CodexDark = 7` — each with its `mod` declaration, display
-  name, parse aliases, quantization flag, and the two dispatch arms mapping
-  the kind to its `Theme::iterm_green()` / `Theme::codex_dark()`.
-- Why here: `ThemeKind` is a closed enum with exhaustive matches, so a new
-  theme cannot be added from outside the crate.
-- Retire when: same as `theme/iterm.rs` above.
+  `ThemeKind::CodexDark = 7` — with display names, parse aliases,
+  `requires_truecolor`, dispatch arms, and a tiny `fork_themes` module that
+  expands `overlay_core::{codex_dark,iterm_green}_theme!()` into
+  `Theme::codex_dark()` / `Theme::iterm_green()`. Palettes live in
+  `overlay/overlay-core/src/themes.rs`.
+- Why here: `ThemeKind` is a closed enum with exhaustive matches and upstream
+  has no custom-theme registry, so registration hooks must stay in this crate;
+  only the RGB palettes could move to overlay-core.
+- Retire when: upstream accepts user-defined themes from config (or an open
+  theme registry), which would turn registration into a `~/.grok` file and drop
+  the delta to zero.
 
 ### `crates/codegen/xai-grok-pager-render/src/theme/cache.rs`
 
@@ -316,7 +310,7 @@ Template for new entries:
   the theme but missed this catalog.
 - Why here: these are hand-written catalogs, not derived from
   `ThemeKind::available()`.
-- Retire when: same as `theme/iterm.rs` above.
+- Retire when: same as `theme/mod.rs` above.
 
 ### `crates/codegen/xai-grok-markdown` — table spans
 
@@ -416,4 +410,4 @@ Covers `crates/codegen/xai-grok-pager/src/scrollback/render.rs`,
   their raw public `Theme` constructors for the palette contrast assertion.
 - Why here: the fork variants require match arms, and `Theme::current()` is
   quantized so limited-color terminals can collapse the compared colors.
-- Retire when: same as `theme/iterm.rs` above.
+- Retire when: same as `theme/mod.rs` above.

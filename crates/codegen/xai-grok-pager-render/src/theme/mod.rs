@@ -13,9 +13,23 @@
 pub mod cache;
 pub mod color_support;
 pub mod env_appearance;
+// Fork themes: palettes + macros live in overlay-core (zero merge cost).
+mod fork_themes {
+    use ratatui::style::{Color, Modifier};
+
+    use super::Theme;
+
+    impl Theme {
+        pub const fn codex_dark() -> Self {
+            overlay_core::codex_dark_theme!()
+        }
+        pub const fn iterm_green() -> Self {
+            overlay_core::iterm_green_theme!()
+        }
+    }
+}
 mod grokday;
 mod groknight;
-mod iterm;
 pub mod md_style;
 pub mod osc11;
 mod oscura;
@@ -23,7 +37,6 @@ mod rosepine;
 pub mod system_appearance;
 mod terminal_default;
 pub mod tokyonight;
-mod codexdark;
 
 pub use color_support::quantize;
 pub use tokyonight::{Theme, pulse_brightness, wave_brightness};
