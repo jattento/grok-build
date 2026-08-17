@@ -2,8 +2,9 @@
 #
 # Parent sends: task_type + complexity + requires_vision
 #               (+ optional error-path model override).
-# This file decides: candidate models, reasoning effort, tool ceiling, vision
+# This file decides: candidate models, reasoning effort, vision
 # filter, and how CodexBar quota breaks ties.
+# Tool ceiling is always general-purpose (not a knob).
 #
 # Docs (fork): overlay/subagent-router/CONTEXT.md
 # Sensor:     codexbar usage --format json  (must be on PATH)
@@ -41,10 +42,10 @@ notify_command = "auto"
 # CodexBar returns primary/secondary/tertiary (+ extraRateWindows) with
 # usedPercent + windowMinutes — not named session/weekly/monthly.
 # We classify by duration, then:
-#   1) veto if any *present* window is exhausted
+#   1) veto if any *present* window is exhausted (extraRateWindows included)
 #   2) rank survivors by weekly-class remaining / time-to-reset
 #   3) session-class as fine tiebreak
-# Credits (e.g. codex credits.remaining) are informational only.
+# Credits (e.g. codex credits.remaining) are informational only — never a veto.
 
 [windows]
 # remaining% = 100 - usedPercent. At or below this floor → exhaustion veto.
@@ -56,44 +57,20 @@ weekly_min_minutes  = 1440      # ≥ 1d
 weekly_max_minutes  = 11520     # ≤ 8d  → weekly
 monthly_min_minutes = 40320     # ≥ 28d → monthly
 
-# Include CodexBar extraRateWindows[] in the exhaustion veto set.
-include_extra_rate_windows = true
-
-# Do not treat credits.remaining == 0 as a veto.
-credits_are_informational = true
-
-# Ranking: among non-vetoed fit candidates, prefer higher remaining on the
-# weekly-class window, then sooner weekly reset (burn what renews soon),
-# then session-class remaining.
-rank_primary = "weekly"
-rank_secondary = "session"
-
-# ── Tool ceiling (derived from task_type; parent does not pick this) ─────────
+# ── Tool ceiling ─────────────────────────────────────────────────────────────
 # Every child uses the unrestricted general-purpose runtime. Task type still
-# selects the model, effort, and persona intent; it no longer removes tools.
+# selects the model, effort, and persona intent; it does not remove tools.
 # Plan stays on the parent agent — not a child task type.
 
-[tool_ceiling]
-scout      = "general-purpose"
-debug      = "general-purpose"
-implement  = "general-purpose"
-design     = "general-purpose"
-review     = "general-purpose"
-
 # ── Fallback & error-path override ───────────────────────────────────────────
-
-[fallback]
-# If no fit candidate has usable quota (or every sensor path fails), spawn with
-# the parent session model and continue.
-use_parent_model = true
+# Empty quota / failed sensors / vision-empty pool → parent session model.
+# That fallback is not configurable.
 
 [override]
 # Optional `model` on the spawn tool: error-path only (tool description must say so).
-# Honored blindly (no fit / quota / vision veto). Always notifies on macOS when present.
-enabled = true
+# Always honored blindly (no fit / quota / vision veto), independent of this table.
+# `notify_on_use` gates the macOS notification only.
 notify_on_use = true
-# Soft policy only (no hard check that a prior child failed). Enforcement = prompt + notify.
-require_prior_failure = false
 
 # ── Vision ───────────────────────────────────────────────────────────────────
 # Tool arg: requires_vision (bool, default false).
@@ -108,7 +85,6 @@ require_prior_failure = false
 default_requires_vision = false
 # If requires_vision and every candidate is filtered out → parent-model fallback
 # (same as empty quota pool), unless error-path model override is set.
-fallback_when_none = "parent"
 
 # ── Model catalog: Grok slug → CodexBar provider + capabilities ──────────────
 # Every slug referenced in [routes.*] MUST appear here.

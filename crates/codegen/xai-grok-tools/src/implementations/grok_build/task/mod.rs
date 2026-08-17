@@ -175,6 +175,9 @@ async fn resolve_background_notice_names(resources: &SharedResources) -> (String
 /// Returns `(model, effort, Some(subagent_type), provenance)`.
 /// When `task_type` is absent, keeps legacy behaviour (caller `subagent_type`,
 /// optional explicit model only).
+///
+/// Does not seed `~/.grok/subagent-router.toml` on the spawn path; an
+/// unconfigured user gets the same legacy tuple as upstream.
 fn resolve_subagent_route(
     input: &TaskToolInput,
     model_override: Option<String>,
@@ -186,7 +189,7 @@ fn resolve_subagent_route(
 ) {
     use overlay_subagent_router::{
         OsascriptNotifier, RouteInput, RouteSource, load_config, process_global_codexbar_sensor,
-        resolve_config_path, resolve_for_spawn, seed_config_if_missing,
+        resolve_config_path, resolve_for_spawn,
     };
 
     let has_task_type = input
@@ -205,8 +208,23 @@ fn resolve_subagent_route(
         return (model_override, None, None, provenance);
     }
 
+    let has_explicit_model = model_override
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty());
+
     let config_path = resolve_config_path();
-    let _ = seed_config_if_missing(&config_path);
+    // Explicit model is still honored without a config file (resolve_for_spawn
+    // short-circuits it). Unconfigured users with no override stay legacy.
+    if !has_explicit_model && !config_path.exists() {
+        let provenance = if model_override.is_some() {
+            ModelOverrideProvenance::Tool
+        } else {
+            ModelOverrideProvenance::Harness
+        };
+        return (model_override, None, None, provenance);
+    }
+
     let router_cfg = load_config(&config_path).ok();
     let cache_ttl = router_cfg
         .as_ref()
@@ -480,12 +498,30 @@ impl xai_tool_runtime::Tool for TaskTool {
 
         // Subagent router: task_type + complexity → model, effort, tool ceiling.
         // Error-path model_override is honored blindly with a macOS notification.
+        // Blocking I/O (config read, CodexBar probes) runs off the async worker.
+        let route_input = input.clone();
+        let route_model_override = model_override.clone();
         let (routed_model, routed_effort, routed_subagent_type, mut model_provenance) =
-            resolve_subagent_route(&input, model_override.clone());
+            match tokio::task::spawn_blocking(move || {
+                resolve_subagent_route(&route_input, route_model_override)
+            })
+            .await
+            {
+                Ok(tuple) => tuple,
+                Err(_) => {
+                    let provenance = if model_override.is_some() {
+                        ModelOverrideProvenance::Tool
+                    } else {
+                        ModelOverrideProvenance::Harness
+                    };
+                    (model_override, None, None, provenance)
+                }
+            };
         if had_tool_model_override {
             model_provenance = ModelOverrideProvenance::Tool;
         }
         let model = routed_model;
+        let effort_is_router_default = routed_effort.is_some();
         let (primary_provider, provider_fallback_models) =
             if resume_from.is_none() && !had_tool_model_override && input.task_type.is_some() {
                 overlay_subagent_router::configured_provider_retry_plan(
@@ -497,9 +533,13 @@ impl xai_tool_runtime::Tool for TaskTool {
             } else {
                 (None, vec![])
             };
-        // Prefer router-derived type when task_type was provided.
+        // Explicit subagent_type is caller intent; only route when omitted (default).
         let effective_subagent_type =
-            routed_subagent_type.unwrap_or_else(|| input.subagent_type.clone());
+            if input.subagent_type == xai_tool_types::default_subagent_type() {
+                routed_subagent_type.unwrap_or_else(|| input.subagent_type.clone())
+            } else {
+                input.subagent_type.clone()
+            };
 
         // Treat blank/empty/"null" cwd as absent (models sometimes emit these).
         // Also strip stray surrounding quote characters and expand `~`.
@@ -635,6 +675,7 @@ impl xai_tool_runtime::Tool for TaskTool {
                 model,
                 model_override_provenance: model_provenance,
                 reasoning_effort: routed_effort,
+                reasoning_effort_is_router_default: effort_is_router_default,
                 primary_provider,
                 provider_fallback_models,
                 persona: None,
@@ -703,7 +744,7 @@ impl xai_tool_runtime::Tool for TaskTool {
             return Ok(ToolOutput::Text(
                 xai_tool_types::format_subagent_started_background(
                     &id,
-                    &input.subagent_type,
+                    &effective_subagent_type,
                     &input.description,
                     &naming,
                     continue_parent,
@@ -743,7 +784,7 @@ impl xai_tool_runtime::Tool for TaskTool {
 
             let text = xai_tool_types::format_subagent_auto_backgrounded(
                 &id,
-                &input.subagent_type,
+                &effective_subagent_type,
                 &input.description,
                 &naming,
                 notified_on_completion,
@@ -762,7 +803,7 @@ impl xai_tool_runtime::Tool for TaskTool {
                 // (pending_completions / snapshot) keep the Arc<str>.
                 output: result.output.to_string(),
                 subagent_id: result.subagent_id,
-                subagent_type: input.subagent_type,
+                subagent_type: effective_subagent_type,
                 tool_calls: result.tool_calls,
                 turns: result.turns,
                 duration_ms: result.duration_ms,

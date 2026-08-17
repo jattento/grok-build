@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Disconnected manual harness: not wired to CI or scripts, not a source of
+# truth for default models, and must not be treated as coverage.
 """End-to-end check that chain of thought survives across turns.
 
 A reasoning model is only useful across a conversation if what it thought in

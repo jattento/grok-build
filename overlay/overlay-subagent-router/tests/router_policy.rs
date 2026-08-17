@@ -22,17 +22,11 @@ fn input(task: &str, complexity: &str, vision: bool) -> RouteInput {
 
 #[test]
 fn tool_ceiling_by_task_type() {
-    assert_eq!(tool_ceiling_for_task_type("scout"), "general-purpose");
-    for t in ["debug", "implement", "design", "review"] {
-        assert_eq!(tool_ceiling_for_task_type(t), "general-purpose");
-    }
     let cfg = starter();
-    assert_eq!(cfg.tool_ceiling("scout"), "general-purpose");
-    assert_eq!(cfg.tool_ceiling("implement"), "general-purpose");
-
-    let mut stale = starter();
-    stale.tool_ceiling.insert("scout".into(), "explore".into());
-    assert_eq!(stale.tool_ceiling("scout"), "general-purpose");
+    for t in ["scout", "debug", "implement", "design", "review"] {
+        assert_eq!(tool_ceiling_for_task_type(t), "general-purpose");
+        assert_eq!(cfg.tool_ceiling(t), "general-purpose");
+    }
 }
 
 #[test]
@@ -114,8 +108,13 @@ fn provider_names_are_reported_only_after_true_exhaustion() {
     assert!(exhausted.contains("service unavailable"));
 
     let deterministic = provider_retry_error("cwd does not exist", &providers, false);
-    assert_eq!(deterministic, "Session error: cwd does not exist");
+    assert_eq!(deterministic, "cwd does not exist");
     assert!(!deterministic.contains("providers"));
+    assert_eq!(
+        deterministic.matches("Session error").count(),
+        0,
+        "caller already prefixes turn failures, overlay must not add one"
+    );
 }
 
 #[test]

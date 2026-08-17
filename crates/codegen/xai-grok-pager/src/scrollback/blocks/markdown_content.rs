@@ -8,13 +8,14 @@
 
 use std::cell::RefCell;
 use std::ops::Range;
+use std::sync::Arc;
 
 use ratatui::text::Line;
 
 use crate::render::wrapping::word_wrap_lines_with_joiners;
 use crate::scrollback::types::{BlockLine, BlockOutput};
 
-use super::mermaid_content::{AffordanceSubject, CopyBlock};
+use super::mermaid_content::{AffordanceSubject, CachedCopyBlock, CopyBlock};
 use super::quote_bar::QuoteBarStrip;
 
 pub(crate) const MARKDOWN_BODY_RANGE: u16 = 0;
@@ -58,6 +59,10 @@ pub struct MarkdownContent {
     state: RefCell<RenderState>,
     current_raw: bool,
     generation: u64,
+    /// Immutable copy-affordance identities (subject + `Arc` source body),
+    /// rebuilt at construction/`finish` only — never per frame. Per-frame work
+    /// re-reads pre-wrap ranges from the live view and clones `Arc` handles.
+    copy_idents: Vec<CachedCopyBlock>,
 }
 
 /// Borrowed view of cached wrapped lines + joiners.
@@ -67,6 +72,106 @@ pub struct MarkdownContent {
 pub struct WrappedLines<'a> {
     pub lines: &'a [Line<'static>],
     pub joiners: &'a [Option<String>],
+}
+
+/// Subject + `Arc` source for one copyable span (no ranges).
+fn copy_ident_for_code(span: &xai_grok_markdown::CodeBlockSpan) -> CachedCopyBlock {
+    let subject = if super::mermaid_content::is_mermaid_info(&span.info) {
+        AffordanceSubject::Mermaid
+    } else {
+        let label = span
+            .info
+            .split_whitespace()
+            .next()
+            .unwrap_or("code")
+            .to_lowercase();
+        AffordanceSubject::Code(label)
+    };
+    CachedCopyBlock {
+        subject,
+        source: Arc::<str>::from(span.body.as_str()),
+    }
+}
+
+/// Immutable identities in document order (empty ranges skipped).
+fn scan_copy_idents(view: &xai_grok_markdown::MarkdownRenderView<'_>) -> Vec<CachedCopyBlock> {
+    let mut items: Vec<(usize, CachedCopyBlock)> =
+        Vec::with_capacity(view.code_blocks.len() + view.tables.len());
+    for span in view
+        .code_blocks
+        .iter()
+        .filter(|span| !span.output_line_range.is_empty())
+    {
+        items.push((span.output_line_range.start, copy_ident_for_code(span)));
+    }
+    for span in view
+        .tables
+        .iter()
+        .filter(|span| !span.output_line_range.is_empty())
+    {
+        items.push((
+            span.output_line_range.start,
+            CachedCopyBlock {
+                subject: AffordanceSubject::Table,
+                source: Arc::<str>::from(span.source.as_str()),
+            },
+        ));
+    }
+    items.sort_by_key(|(start, _)| *start);
+    items.into_iter().map(|(_, id)| id).collect()
+}
+
+/// Live pre-wrap ranges in the same document order as [`scan_copy_idents`].
+fn scan_copy_ranges(view: &xai_grok_markdown::MarkdownRenderView<'_>) -> Vec<Range<usize>> {
+    let mut items: Vec<Range<usize>> =
+        Vec::with_capacity(view.code_blocks.len() + view.tables.len());
+    items.extend(
+        view.code_blocks
+            .iter()
+            .filter(|span| !span.output_line_range.is_empty())
+            .map(|span| span.output_line_range.clone()),
+    );
+    items.extend(
+        view.tables
+            .iter()
+            .filter(|span| !span.output_line_range.is_empty())
+            .map(|span| span.output_line_range.clone()),
+    );
+    items.sort_by_key(|range| range.start);
+    items
+}
+
+/// Full scan used when the finish-time identity cache is missing or mismatched.
+fn scan_copy_blocks(view: &xai_grok_markdown::MarkdownRenderView<'_>) -> Vec<CopyBlock> {
+    let mut blocks = Vec::with_capacity(view.code_blocks.len() + view.tables.len());
+    blocks.extend(
+        view.code_blocks
+            .iter()
+            .filter(|span| !span.output_line_range.is_empty())
+            .map(|span| {
+                let id = copy_ident_for_code(span);
+                CopyBlock {
+                    prewrap_range: span.output_line_range.clone(),
+                    subject: id.subject,
+                    source: id.source,
+                }
+            }),
+    );
+    blocks.extend(
+        view.tables
+            .iter()
+            .filter(|span| !span.output_line_range.is_empty())
+            .map(|span| CopyBlock {
+                prewrap_range: span.output_line_range.clone(),
+                subject: AffordanceSubject::Table,
+                source: Arc::<str>::from(span.source.as_str()),
+            }),
+    );
+    // `sort_by_key` is stable: although code blocks and tables never
+    // overlap, preserving renderer order for equal anchors keeps the
+    // positional contract with `apply_affordance_rows` explicit.
+    blocks.sort_by_key(|block| block.prewrap_range.start);
+    blocks
 }
 
 impl MarkdownContent {
@@ -109,7 +214,7 @@ impl MarkdownContent {
         // flushes any trailing held-back delimiter bytes for this complete,
         // one-shot document.
         renderer.finish(Some(get_syntect()));
-        Self {
+        let mut content = Self {
             state: RefCell::new(RenderState {
                 renderer,
                 cache_width: 0,
@@ -122,7 +227,10 @@ impl MarkdownContent {
             }),
             current_raw: false,
             generation: 1,
-        }
+            copy_idents: Vec::new(),
+        };
+        content.refresh_copy_idents();
+        content
     }
 
     /// Create empty for streaming.
@@ -140,6 +248,7 @@ impl MarkdownContent {
             }),
             current_raw: false,
             generation: 0,
+            copy_idents: Vec::new(),
         }
     }
 
@@ -172,6 +281,15 @@ impl MarkdownContent {
         state.frozen_pre_wrap_count = 0;
         state.frozen_wrapped_count = 0;
         self.generation += 1;
+        // Capture copy subjects/sources once the render is final (never per
+        // streaming chunk), mirroring mermaid detection.
+        self.refresh_copy_idents();
+    }
+
+    /// Rebuild the immutable copy-block identity cache from the current view.
+    fn refresh_copy_idents(&mut self) {
+        let state = self.state.get_mut();
+        self.copy_idents = scan_copy_idents(&state.renderer.view());
     }
 
     /// Get the source markdown text.
@@ -244,59 +362,45 @@ impl MarkdownContent {
     /// Every copyable markdown block in this message, in document order:
     /// its pre-wrap rendered line range, what kind of block it is, and the
     /// source text a `[Copy]` press should put on the clipboard.
+    ///
+    /// Subjects and source bodies come from the construction/`finish` cache
+    /// (`Arc` handles only); only pre-wrap ranges are re-read from the live
+    /// view so table reflow at the current width stays correct.
     pub fn copy_blocks(&self) -> Vec<CopyBlock> {
         let state = self.state.borrow();
         let view = state.renderer.view();
-        let mut blocks = Vec::with_capacity(view.code_blocks.len() + view.tables.len());
-
-        blocks.extend(
-            view.code_blocks
+        let ranges = scan_copy_ranges(&view);
+        if !self.copy_idents.is_empty() && self.copy_idents.len() == ranges.len() {
+            return self
+                .copy_idents
                 .iter()
-                .filter(|span| !span.output_line_range.is_empty())
-                .map(|span| {
-                    let subject = if super::mermaid_content::is_mermaid_info(&span.info) {
-                        AffordanceSubject::Mermaid
-                    } else {
-                        let label = span
-                            .info
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or("code")
-                            .to_lowercase();
-                        AffordanceSubject::Code(label)
-                    };
-                    CopyBlock {
-                        prewrap_range: span.output_line_range.clone(),
-                        subject,
-                        source: span.body.clone(),
-                    }
-                }),
-        );
-        blocks.extend(
-            view.tables
-                .iter()
-                .filter(|span| !span.output_line_range.is_empty())
-                .map(|span| CopyBlock {
-                    prewrap_range: span.output_line_range.clone(),
-                    subject: AffordanceSubject::Table,
-                    source: span.source.clone(),
-                }),
-        );
-
-        // `sort_by_key` is stable: although code blocks and tables never
-        // overlap, preserving renderer order for equal anchors keeps the
-        // positional contract with `apply_affordance_rows` explicit.
-        blocks.sort_by_key(|block| block.prewrap_range.start);
-        blocks
+                .zip(ranges)
+                .map(|(id, prewrap_range)| CopyBlock {
+                    prewrap_range,
+                    subject: id.subject.clone(),
+                    source: Arc::clone(&id.source),
+                })
+                .collect();
+        }
+        // Streaming / cache-miss fallback: full scan (still `Arc` sources).
+        scan_copy_blocks(&view)
     }
 
     /// How many affordance rows [`copy_blocks`](Self::copy_blocks) would
     /// produce: the total, and the Mermaid subset of it.
     ///
-    /// Mirrors `copy_blocks`' filtering exactly but allocates nothing and
-    /// clones no source, for the off-screen height estimate — which runs for
-    /// every entry on every layout pass, not just the visible ones.
+    /// Uses the finish-time identity cache when present (no view walk); falls
+    /// back to a range-only count for the streaming empty cache.
     pub fn copy_block_counts(&self) -> (usize, usize) {
+        if !self.copy_idents.is_empty() {
+            let total = self.copy_idents.len();
+            let mermaid = self
+                .copy_idents
+                .iter()
+                .filter(|id| id.subject == AffordanceSubject::Mermaid)
+                .count();
+            return (total, mermaid);
+        }
         let state = self.state.borrow();
         let view = state.renderer.view();
         let mermaid = view

@@ -1827,11 +1827,9 @@ impl SessionActor {
         {
             return false;
         }
-        if xai_grok_sampling_types::is_context_length_error(&err.message) {
-            return true;
-        }
         let Some(ref metadata) = err.model_metadata else {
-            return false;
+            // Proxies without metadata: text classification is the only signal.
+            return xai_grok_sampling_types::is_context_length_error(&err.message);
         };
         let Some(context_window) = metadata.context_window else {
             return false;

@@ -65,15 +65,15 @@ A catalog model marked without vision (`supports_vision = false`), often shown a
 _Avoid_: treating NV as a provider or task type
 
 **Parent model fallback**:
-When no fitted candidate has usable quota data (or every sensor path fails), use the model of the parent session and continue the spawn.
-_Avoid_: hard fail, silent default to a fixed third model (unless config later says so)
+When no fitted candidate has usable quota data (or every sensor path fails, or vision filtering empties the pool), use the model of the parent session and continue the spawn. Always parent; not a config knob.
+_Avoid_: hard fail, silent default to a fixed third model
 
 **Provider spawn fallback**:
 After routing, a provider-classified spawn failure retries one representative model from each remaining configured provider in route order. It never tries every model in a provider, never retries deterministic setup or task failures, and stops on the first success.
 _Avoid_: model-by-model retries, retrying validation/worktree/cwd failures, reporting the first provider failure as final
 
 **Tool ceiling**:
-The maximum tools the child may use. Every routed task type, including `scout`, uses `general-purpose`; task type selects cognitive intent, model, and effort but never removes shell or edit capability. Plan work stays on the parent; it is not a child task type.
+The maximum tools the child may use. Always `general-purpose` (a constant, not a config table), including `scout`; task type selects cognitive intent, model, and effort but never removes shell or edit capability. Plan work stays on the parent; it is not a child task type.
 _Avoid_: capability_mode as the parent-facing input (parent does not pick this)
 
 **Provider binding**:

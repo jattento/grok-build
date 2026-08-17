@@ -177,10 +177,13 @@ impl AgentMessageBlock {
             .iter()
             .map(|block| block.prewrap_range.clone())
             .collect();
-        let affordances = mermaid_content::apply_affordance_rows(&mut out, &ranges, |idx| {
-            let block = &blocks[idx];
-            (block.source.clone(), block.subject.clone())
-        });
+        // Width-aware reservation uses the same fit predicate as the painter /
+        // hit-test so a reserved row is always paintably clickable.
+        let affordances =
+            mermaid_content::apply_affordance_rows(&mut out, &ranges, ctx.width, |idx| {
+                let block = &blocks[idx];
+                (block.source.to_string(), block.subject.clone())
+            });
         (out, affordances)
     }
 }
@@ -432,7 +435,7 @@ mod tests {
                 "the source code block stays on screen",
             );
             assert!(matches!(
-                out.lines[affs[0].row_offset as usize].selectable,
+                out.lines[affs[0].row_offset].selectable,
                 Selectable::None
             ));
         }
@@ -501,13 +504,54 @@ mod tests {
             assert_eq!(affs[1].source, "CCC-->DDD\n");
             for aff in &affs {
                 assert!(matches!(
-                    out.lines[aff.row_offset as usize].selectable,
+                    out.lines[aff.row_offset].selectable,
                     Selectable::None
                 ));
             }
             // Both diagrams' sources remain visible as code blocks.
             assert!(shown_text(&out).contains("AAA-->BBB"));
             assert!(shown_text(&out).contains("CCC-->DDD"));
+        }
+
+        /// Below the first-action fit width, no row is reserved (no gap). At a
+        /// width where the action fits, the row is present and its hit target
+        /// maps to the correct block source.
+        #[test]
+        fn narrow_width_skips_row_wide_width_keeps_clickable_copy_row() {
+            crate::appearance::cache::set_render_mermaid(RenderMermaid::On);
+            let block = AgentMessageBlock::new("```rust\nfn main() {}\n```\n");
+            let subject = AffordanceSubject::Code("rust".into());
+            let min = mermaid_content::affordance_min_action_width(&subject);
+
+            let narrow_affs = block.diagram_affordances(&ctx(min - 1, false));
+            let narrow_out = block.output(&ctx(min - 1, false));
+            assert!(
+                narrow_affs.is_empty(),
+                "no action fits → no affordance reserved"
+            );
+            assert_eq!(
+                narrow_out
+                    .lines
+                    .iter()
+                    .filter(|l| matches!(l.selectable, Selectable::None))
+                    .count(),
+                0,
+                "narrow pane must not leave a blank gap row",
+            );
+
+            let wide_affs = block.diagram_affordances(&ctx(min, false));
+            let wide_out = block.output(&ctx(min, false));
+            assert_eq!(wide_affs.len(), 1);
+            assert_eq!(wide_affs[0].source, "fn main() {}\n");
+            assert_eq!(wide_affs[0].subject, subject);
+            assert!(matches!(
+                wide_out.lines[wide_affs[0].row_offset].selectable,
+                Selectable::None
+            ));
+            assert!(mermaid_content::affordance_row_fits(
+                &wide_affs[0].subject,
+                min
+            ));
         }
     }
 }

@@ -18,6 +18,25 @@ use crate::events::{SamplingChannel, SamplingErrorInfo, SamplingEvent};
 use crate::metrics::InferenceLatencyStats;
 use crate::types::RequestId;
 
+/// Field-wise max merge for stream usage. CLIProxyAPI emits partial `usage`
+/// objects on interim chunks; a counter of 0 must never overwrite a prior
+/// non-zero (only larger/present values are adopted).
+fn merge_usage_monotonic(prev: Option<TokenUsage>, next: TokenUsage) -> TokenUsage {
+    let Some(p) = prev else {
+        return next;
+    };
+    TokenUsage {
+        prompt_tokens: p.prompt_tokens.max(next.prompt_tokens),
+        completion_tokens: p.completion_tokens.max(next.completion_tokens),
+        total_tokens: p.total_tokens.max(next.total_tokens),
+        reasoning_tokens: p.reasoning_tokens.max(next.reasoning_tokens),
+        cached_prompt_tokens: p.cached_prompt_tokens.max(next.cached_prompt_tokens),
+        cache_creation_prompt_tokens: p
+            .cache_creation_prompt_tokens
+            .max(next.cache_creation_prompt_tokens),
+    }
+}
+
 /// Transform a raw Chat Completions chunk stream into a stream of
 /// [`SamplingEvent`]s.
 ///
@@ -58,7 +77,6 @@ pub fn stream_chat_completions<'a>(
         }
 
         // Per-response accumulators
-        let mut first_chunk_seen = false;
         let mut first_choice_seen = false;
         let mut first_token_emitted = false;
         let mut model: String = String::new();
@@ -119,13 +137,15 @@ pub fn stream_chat_completions<'a>(
                 }
             };
 
-            if !first_chunk_seen {
+            // CLIProxyAPI: usage-only chunks may carry model: ""; never pin metadata to empty.
+            if model.is_empty() && !chunk.model.is_empty() {
                 model = chunk.model.clone();
+            }
+            if model_fingerprint.is_none() {
                 model_fingerprint = chunk
                     .system_fingerprint
                     .clone()
                     .filter(|s| !s.is_empty());
-                first_chunk_seen = true;
             }
 
             if let Some(u) = chunk.usage.clone() {
@@ -136,7 +156,9 @@ pub fn stream_chat_completions<'a>(
                     (_, Some(n)) => Some(n),
                     (prev, None) => prev,
                 };
-                usage = Some(u.into());
+                // CLIProxyAPI emits partial `usage` on interim chunks; missing
+                // counters deserialize as 0 and must not clobber prior non-zeros.
+                usage = Some(merge_usage_monotonic(usage, u.into()));
             }
 
             // Track whether this chunk carried meaningful content.
@@ -770,6 +792,96 @@ mod tests {
         match events.last().unwrap() {
             SamplingEvent::Completed { response, .. } => {
                 assert_eq!(response.cost_usd_ticks, Some(99));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    /// CLIProxyAPI interim chunks carry partial usage (missing counters as 0).
+    /// A full usage object must survive a later partial one.
+    #[tokio::test]
+    async fn partial_usage_chunk_does_not_zero_prior_counters() {
+        let mut full = make_chunk(vec![ChatChunkDelta::default()]);
+        full.usage = Some(Usage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            cost_in_usd_ticks: None,
+        });
+        // Partial usage: only total present; others default to 0 via serde.
+        let mut partial = make_chunk(vec![ChatChunkDelta::default()]);
+        partial.usage = Some(Usage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 150,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            cost_in_usd_ticks: None,
+        });
+        let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
+            Ok(text_chunk("ok")),
+            Ok(full),
+            Ok(partial),
+            Ok(final_chunk(FinishReason::Stop)),
+        ];
+        let raw = stream::iter(chunks).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                let u = response.usage.as_ref().expect("usage");
+                assert_eq!(u.prompt_tokens, 100);
+                assert_eq!(u.completion_tokens, 50);
+                assert_eq!(u.total_tokens, 150);
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    /// CLIProxyAPI usage-only chunks can arrive with model: ""; that must not
+    /// pin assistant model metadata to the empty string.
+    #[tokio::test]
+    async fn empty_model_on_usage_chunk_does_not_pin_metadata() {
+        let mut usage_only = make_chunk(vec![]);
+        usage_only.model = String::new();
+        usage_only.usage = Some(Usage {
+            prompt_tokens: 10,
+            completion_tokens: 0,
+            total_tokens: 10,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            cost_in_usd_ticks: None,
+        });
+        let mut content = text_chunk("ok");
+        content.model = "real-model".into();
+        let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
+            Ok(usage_only),
+            Ok(content),
+            Ok(final_chunk(FinishReason::Stop)),
+        ];
+        let raw = stream::iter(chunks).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                let assistant = response.assistant().expect("assistant item");
+                assert_eq!(
+                    assistant.model_id.as_deref(),
+                    Some("real-model"),
+                    "empty model on a usage-only chunk must not pin metadata"
+                );
             }
             other => panic!("expected Completed, got {other:?}"),
         }

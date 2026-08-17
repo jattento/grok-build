@@ -63,13 +63,13 @@ pub fn parse_history_json(
             .get("resetsAt")
             .and_then(|r| r.as_str())
             .map(|s| s.to_string());
-        if let Some(cap) = last.get("capturedAt").and_then(|c| c.as_str()) {
-            if let Ok(ts) = parse_rfc3339(cap) {
-                newest_captured = Some(match newest_captured {
-                    Some(prev) => prev.max(ts),
-                    None => ts,
-                });
-            }
+        if let Some(cap) = last.get("capturedAt").and_then(|c| c.as_str())
+            && let Ok(ts) = parse_rfc3339(cap)
+        {
+            newest_captured = Some(match newest_captured {
+                Some(prev) => prev.max(ts),
+                None => ts,
+            });
         }
         windows.push(UsageWindowSnap {
             used_percent: used,

@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -87,12 +86,12 @@ impl CodexBarSensor {
     fn fetch_live(&self, cfg: &SensorConfig, provider: &str) -> Result<UsageSnapshot, SensorError> {
         // Prefer CodexBar's own OAuth source for Claude. The router never reads
         // Keychain items or copies credential files.
-        if provider == "claude" {
-            if let Ok(s) = self.run_codexbar(cfg, provider, Some(&["--source", "oauth"])) {
-                return Ok(s);
-            }
-            // Fall through to auto (may still hang; timeout will cut it).
+        if provider == "claude"
+            && let Ok(s) = self.run_codexbar(cfg, provider, Some(&["--source", "oauth"]))
+        {
+            return Ok(s);
         }
+        // Fall through to auto (may still hang; timeout will cut it).
 
         self.run_codexbar(cfg, provider, None)
     }
@@ -145,6 +144,8 @@ pub fn output_with_timeout(
     timeout: Duration,
 ) -> Result<std::process::Output, SensorError> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // Child is waited on and killed on timeout below.
+    #[allow(clippy::disallowed_methods)]
     let mut child = cmd
         .spawn()
         .map_err(|e| SensorError::Spawn(format!("spawn: {e}")))?;
@@ -215,18 +216,12 @@ enum SharedCache {
 
 pub struct MemoryCache {
     entries: HashMap<String, (Instant, UsageSnapshot)>,
-    /// Test/observability: successful fetches that missed the cache.
-    pub misses: AtomicUsize,
-    /// Test/observability: hits served from cache.
-    pub hits: AtomicUsize,
 }
 
 impl MemoryCache {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
-            misses: AtomicUsize::new(0),
-            hits: AtomicUsize::new(0),
         }
     }
 }
@@ -286,17 +281,15 @@ impl<S: Sensor> Sensor for CachedSensor<S> {
     ) -> Result<UsageSnapshot, SensorError> {
         {
             let cache = self.lock_cache();
-            if let Some((at, snap)) = cache.entries.get(provider) {
-                if at.elapsed() < self.ttl {
-                    cache.hits.fetch_add(1, Ordering::Relaxed);
-                    return Ok(snap.clone());
-                }
+            if let Some((at, snap)) = cache.entries.get(provider)
+                && at.elapsed() < self.ttl
+            {
+                return Ok(snap.clone());
             }
         }
         let snap = self.inner.fetch_provider(cfg, provider)?;
         {
             let mut cache = self.lock_cache();
-            cache.misses.fetch_add(1, Ordering::Relaxed);
             cache
                 .entries
                 .insert(provider.to_string(), (Instant::now(), snap.clone()));
@@ -440,6 +433,7 @@ fn parse_window(w: &serde_json::Value) -> Option<UsageWindowSnap> {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn parse_opencode_style() {

@@ -1584,8 +1584,7 @@ async fn test_compact_on_error_no_trigger_when_tokens_within_new_window() {
             let (gateway_tx, _) = mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             let (persistence_tx, _) = mpsc::unbounded_channel::<PersistenceMsg>();
             let actor = create_test_actor(150_000, 1_000_000, 85, gateway_tx, persistence_tx).await;
-            let mut err = api_error_with_context_window(200_000);
-            err.message = "invalid request".to_string();
+            let err = api_error_with_context_window(200_000);
             assert!(!actor.should_compact_on_error(&err).await);
         })
         .await;

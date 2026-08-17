@@ -164,6 +164,9 @@ pub struct SubagentRuntimeOverrides {
     pub model_override_provenance: ModelOverrideProvenance,
     /// Override reasoning effort (e.g. "low", "medium", "high").
     pub reasoning_effort: Option<String>,
+    /// When true, `reasoning_effort` is a router-derived default: applies only
+    /// when no role/persona sets one (lowest precedence).
+    pub reasoning_effort_is_router_default: bool,
     /// Provider selected for the first attempt, when known from router config.
     /// Internal harness data: never exposed on the model-facing task schema.
     pub primary_provider: Option<String>,

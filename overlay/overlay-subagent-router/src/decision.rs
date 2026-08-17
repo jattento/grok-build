@@ -74,7 +74,7 @@ impl ProviderUsageSnapshot {
     }
 }
 
-/// Default tool ceiling when config omits the task type.
+/// Constant tool ceiling for every child task type.
 pub fn tool_ceiling_for_task_type(_task_type: &str) -> &'static str {
     "general-purpose"
 }
@@ -102,25 +102,24 @@ pub fn decide_route(
     let tool_ceiling = config.tool_ceiling(task_type).to_string();
     let requires_vision = input.requires_vision || config.vision.default_requires_vision;
 
-    // Error-path override handled by caller usually; support here too for pure tests
+    // Error-path override handled by caller usually; support here too for pure tests.
+    // Always honored (no `enabled` gate — that field was removed; notify is separate).
     if let Some(m) = input
         .model_override
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if config.override_cfg.enabled {
-            return RouteDecision {
-                model: Some(m.to_string()),
-                effort: None,
-                tool_ceiling,
-                source: RouteSource::ModelOverride,
-                notify: vec![NotifyKind::ModelOverride {
-                    model: m.to_string(),
-                }],
-                reason: "error-path model override".into(),
-            };
-        }
+        return RouteDecision {
+            model: Some(m.to_string()),
+            effort: None,
+            tool_ceiling,
+            source: RouteSource::ModelOverride,
+            notify: vec![NotifyKind::ModelOverride {
+                model: m.to_string(),
+            }],
+            reason: "error-path model override".into(),
+        };
     }
 
     let Some(cell) = config.route_cell(task_type, complexity) else {
