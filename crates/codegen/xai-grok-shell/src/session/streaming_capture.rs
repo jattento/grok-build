@@ -167,7 +167,11 @@ impl StreamingTurnCapture {
     /// Mark a model-requested tool operation even when no argument delta was
     /// retained in this capture.
     pub(crate) fn mark_tool_call(&mut self) {
-        self.phase = CapturePhase::ToolCall;
+        // Only an active capture can be replayed; an idle slot must stay Pending
+        // so provider fallback is not suppressed.
+        if self.prompt_id.is_some() {
+            self.phase = CapturePhase::ToolCall;
+        }
     }
 
     /// Reset the capture in-place and stamp the new turn's identifiers. Called

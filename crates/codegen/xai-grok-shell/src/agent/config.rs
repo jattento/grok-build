@@ -3639,6 +3639,15 @@ pub(crate) fn resolve_model_list(
         }
     }
     for (key, entry) in resolved.iter_mut() {
+        // Explicit [model.*].context_window outranks the overlay catalog.
+        if cfg
+            .config_models
+            .get(key)
+            .and_then(|m| m.context_window)
+            .is_some()
+        {
+            continue;
+        }
         let route = cfg
             .config_models
             .get(key)

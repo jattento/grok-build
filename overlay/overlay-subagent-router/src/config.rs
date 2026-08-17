@@ -25,10 +25,6 @@ pub struct RouterConfig {
     pub sensor: SensorConfig,
     #[serde(default)]
     pub windows: WindowsConfig,
-    #[serde(default)]
-    pub tool_ceiling: HashMap<String, String>,
-    #[serde(default)]
-    pub fallback: FallbackConfig,
     #[serde(default, rename = "override")]
     pub override_cfg: OverrideConfig,
     #[serde(default)]
@@ -94,14 +90,6 @@ pub struct WindowsConfig {
     pub weekly_max_minutes: u64,
     #[serde(default = "default_monthly_min")]
     pub monthly_min_minutes: u64,
-    #[serde(default = "default_true")]
-    pub include_extra_rate_windows: bool,
-    #[serde(default = "default_true")]
-    pub credits_are_informational: bool,
-    #[serde(default = "default_rank_primary")]
-    pub rank_primary: String,
-    #[serde(default = "default_rank_secondary")]
-    pub rank_secondary: String,
 }
 
 impl Default for WindowsConfig {
@@ -112,55 +100,29 @@ impl Default for WindowsConfig {
             weekly_min_minutes: default_weekly_min(),
             weekly_max_minutes: default_weekly_max(),
             monthly_min_minutes: default_monthly_min(),
-            include_extra_rate_windows: true,
-            credits_are_informational: true,
-            rank_primary: default_rank_primary(),
-            rank_secondary: default_rank_secondary(),
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct FallbackConfig {
-    #[serde(default = "default_true")]
-    pub use_parent_model: bool,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct OverrideConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
+    /// Fire a macOS notification when an error-path model override is used.
     #[serde(default = "default_true")]
     pub notify_on_use: bool,
-    #[serde(default)]
-    pub require_prior_failure: bool,
 }
 
 impl Default for OverrideConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
             notify_on_use: true,
-            require_prior_failure: false,
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct VisionConfig {
     #[serde(default)]
     pub default_requires_vision: bool,
-    #[serde(default = "default_fallback_parent")]
-    pub fallback_when_none: String,
-}
-
-impl Default for VisionConfig {
-    fn default() -> Self {
-        Self {
-            default_requires_vision: false,
-            fallback_when_none: default_fallback_parent(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -184,11 +146,9 @@ impl RouterConfig {
         self.routes.get(task_type)?.get(complexity)
     }
 
+    #[allow(clippy::unused_self)]
     pub fn tool_ceiling(&self, task_type: &str) -> &str {
-        self.tool_ceiling
-            .get(task_type)
-            .map(|_| "general-purpose")
-            .unwrap_or_else(|| crate::decision::tool_ceiling_for_task_type(task_type))
+        crate::decision::tool_ceiling_for_task_type(task_type)
     }
 
     pub fn provider_fallback_models(
@@ -238,6 +198,11 @@ pub fn resolve_config_path() -> PathBuf {
         .join(DEFAULT_CONFIG_REL)
 }
 
+/// Write the embedded starter TOML when `path` does not exist.
+///
+/// Not called on the spawn hot path — invoke deliberately to bootstrap a
+/// user's config (e.g. smoke tools, install helpers). Spawn uses an existing
+/// file only; missing config falls back to legacy/parent behavior.
 pub fn seed_config_if_missing(path: &Path) -> Result<bool, ConfigError> {
     if path.exists() {
         return Ok(false);
@@ -298,13 +263,4 @@ fn default_weekly_max() -> u64 {
 }
 fn default_monthly_min() -> u64 {
     40320
-}
-fn default_rank_primary() -> String {
-    "weekly".into()
-}
-fn default_rank_secondary() -> String {
-    "session".into()
-}
-fn default_fallback_parent() -> String {
-    "parent".into()
 }

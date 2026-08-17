@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Disconnected manual harness: not wired to CI or scripts, not a source of
+# truth for default models, and must not be treated as coverage.
 """Score one real, multi-tool coding task across every model in the catalog.
 
 A model that answers "OK" proves only that its route is up. This task needs

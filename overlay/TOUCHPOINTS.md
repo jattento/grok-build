@@ -66,7 +66,10 @@ Template for new entries:
 
 - What: `resolve_subagent_route` at the start of `TaskTool::run` applies router
   model, effort, unrestricted tool ceiling, and the provider-distinct fallback
-  model list before validation and request build.
+  model list before validation and request build. An explicit `subagent_type`
+  is caller intent (routing only fills the default). Router effort is marked
+  as a default so role/persona outrank it. Config is not seeded on spawn.
+  The resolve call runs in `spawn_blocking`.
 - Why here: this is the single model-facing spawn entry for the `task` tool;
   resolution in shell alone would miss inputs only present on the tool args.
 - Retire when: upstream exposes a spawn-time routing hook with equivalent
@@ -83,6 +86,11 @@ Template for new entries:
 ### `crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs`
 ### `crates/codegen/xai-grok-shell/src/extensions/mod.rs`
 ### `crates/codegen/xai-grok-shell/src/extensions/skills.rs`
+
+- What: `x.ai/workflows/list` is no longer registered here; the method moved
+  to the overlay workflow adapter (this file's negative line count is that
+  relocation, not a deletion of the feature).
+
 ### `crates/codegen/xai-grok-shell/src/extensions/overlay_workflows.rs`
 ### `crates/codegen/xai-grok-shell/src/session/commands.rs`
 ### `crates/codegen/xai-grok-shell/src/session/handle.rs`
@@ -185,6 +193,8 @@ Template for new entries:
 - What: computes provider-failover eligibility from the terminal rich
   `SamplingError`, waits until terminal stream events are drained, and withholds
   the retry marker after any streamed output or model-requested tool operation.
+  `mark_tool_call` only flips phase when a capture is active (`prompt_id` set),
+  so a `ToolCallDelta` on an idle slot stays `Pending`.
 - Why here: these files jointly own typed sampling errors and ordered streaming
   state; later layers would need unsafe text parsing or could race event drain.
 - Retire when: the sampler directly reports whether a failed attempt is safe to
@@ -198,15 +208,17 @@ Template for new entries:
 
 ### `crates/codegen/xai-grok-subagent-resolution/src/overrides.rs`
 
-- What: initializes the new internal provider fallback list in a test helper.
+- What: initializes the new internal provider fallback list in a test helper,
+  and treats `reasoning_effort_is_router_default` as lowest-precedence effort.
 - Why here: the helper constructs `SubagentRuntimeOverrides` explicitly instead
-  of using `Default`.
+  of using `Default`; the precedence change lives next to the existing cascade.
 - Retire when: the fallback field no longer lives on that shared runtime type.
 
 ### `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs`
 
-- What: adds the internal primary-provider label and provider-distinct fallback
-  model list to `SubagentRuntimeOverrides`.
+- What: adds the internal primary-provider label, provider-distinct fallback
+  model list, and `reasoning_effort_is_router_default` flag to
+  `SubagentRuntimeOverrides`.
 - Why here: this plain request type is the existing handoff from TaskTool routing
   to the shell child runner.
 - Retire when: upstream exposes equivalent retry metadata.
@@ -271,7 +283,8 @@ Template for new entries:
 
 - What: calls the overlay-owned route policy after model resolution and proves
   every released built-in and `cliproxy` definition resolves to its cited
-  practical window.
+  practical window. An explicit `[model.*].context_window` skips the overlay
+  catalog.
 - Why here: `resolve_model_list` is the shipped boundary where config, remote,
   and built-in definitions become the runtime catalog.
 - Retire when: upstream exposes a route-specific post-resolution model hook.
@@ -281,10 +294,21 @@ Template for new entries:
 ### `crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs`
 
 - What: compact-on-error also fires on context-length error text when the
-  response has no `x-grok-context-window` (GPT / cliproxy).
+  response has no model metadata (GPT / cliproxy). Metadata + token checks
+  still decide when the header is present.
 - Why here: the session gate and its contract tests live in these files.
 - Retire when: upstream treats overflow wording as sufficient without the
   xAI header.
+
+### `crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs`
+
+- What: merges streamed `usage` field-wise with `max` so a partial interim
+  object (missing counters deserialize as 0) cannot zero already-seen totals,
+  and ignores an empty `model` so a usage-only first chunk cannot pin metadata
+  to `""`.
+- Why here: this is the only site that folds Chat Completions chunks into
+  turn usage / assistant model id.
+- Retire when: upstream merges partial usage objects monotonically.
 
 ### `crates/codegen/xai-grok-sampling-types/src/types.rs`
 
@@ -394,12 +418,14 @@ Covers `crates/codegen/xai-grok-markdown/src/output.rs`,
 ### `crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs`
 
 - What: generalizes the affordance row from Mermaid-only to every copyable
-  markdown block. Subject/kind/label policy and its tests live in
-  `overlay/overlay-core/src/affordance.rs`; this file re-exports
+  markdown block. Subject/kind/label policy, width-fit predicate, and their
+  tests live in `overlay/overlay-core/src/affordance.rs`; this file re-exports
   `AffordanceSubject` / `AffordanceKind`, keeps `CopyBlock` /
-  `DiagramAffordance` / column layout / `apply_affordance_rows`, and translates
-  overlay policy into `AffordanceButton { col, .. }`. Mermaid's label, buttons,
-  columns and status are unchanged and pinned by the existing layout tests.
+  `DiagramAffordance` (`row_offset: usize`) / column layout /
+  `apply_affordance_rows` (reserves a row only when an action fits the current
+  width), and translates overlay policy into `AffordanceButton { col, .. }`.
+  Mermaid's label, buttons, columns and status are unchanged and pinned by the
+  existing layout tests.
 - Why here: the row-insertion, layout and hit-rect machinery already lives in
   this file and is the single source of truth shared with the painter. Wrapping
   it from `overlay/` would mean duplicating that layout and reintroducing exactly
@@ -413,11 +439,11 @@ Covers `crates/codegen/xai-grok-markdown/src/output.rs`,
 Covers `crates/codegen/xai-grok-pager/src/scrollback/blocks/markdown_content.rs`
 and `crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs`.
 
-- What: `MarkdownContent::copy_blocks()` merges the view's code-block and table
-  spans into one document-ordered list, `copy_block_counts()` counts them without
-  allocating, and `AgentMessageBlock` drives affordance rows from that list
-  instead of from Mermaid alone (caching the counts at construction/finish so the
-  off-screen height estimate never rescans).
+- What: `MarkdownContent` caches copy subjects/sources (`Arc<str>`) at
+  construction/`finish`; `copy_blocks()` re-reads only live pre-wrap ranges.
+  `AgentMessageBlock` drives width-aware affordance rows from that list
+  instead of from Mermaid alone (caching the counts at construction/finish so
+  the off-screen height estimate never rescans).
 - Why here: these are the producers of the block's `output()` and of
   `diagram_affordances()`; the inserted rows and their anchored offsets must come
   from one layout pass, which only this code performs.

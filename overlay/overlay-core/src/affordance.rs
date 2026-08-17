@@ -1,7 +1,8 @@
-//! Affordance-row subject policy for copyable markdown blocks.
+//! Affordance-row subject policy and width measurement for copyable markdown blocks.
 //!
-//! Dependency-free labels and button sets only. Display-column geometry and
-//! pager private types stay in `xai-grok-pager`.
+//! Dependency-free: labels, button sets, and the fit predicate shared by the
+//! pager's row reservation, painter, and hit-test. Column geometry for the full
+//! multi-button layout still lives in `xai-grok-pager`.
 
 use std::borrow::Cow;
 
@@ -51,6 +52,10 @@ pub const AFFORDANCE_COPY_SOURCE: &str = "[Copy Source]";
 /// Affordance-row button label: copy a code block or table's source.
 pub const AFFORDANCE_COPY: &str = "[Copy]";
 
+/// Display-column gap between adjacent affordance-row segments (label → first
+/// button, button → button, last button → status hint).
+pub const AFFORDANCE_GAP: u16 = 3;
+
 /// Plain policy for one affordance row — labels and kinds only, no columns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AffordancePolicy {
@@ -87,6 +92,55 @@ pub fn affordance_policy(subject: &AffordanceSubject, rendering: bool) -> Afford
     }
 }
 
+/// Display columns for affordance chrome.
+///
+/// All labels and button strings are ASCII plus single-cell symbols (`◇`, `…`),
+/// so character count equals terminal cells without a Unicode-width dependency.
+#[inline]
+pub fn affordance_display_cols(text: &str) -> u16 {
+    text.chars().count() as u16
+}
+
+/// Whether a segment starting at display column `col` with text `label` fits
+/// wholly inside a row of `width` columns.
+#[inline]
+pub fn affordance_segment_fits(col: u16, label: &str, width: u16) -> bool {
+    col.saturating_add(affordance_display_cols(label)) <= width
+}
+
+/// Columns needed so the first action button fits after the subject label.
+///
+/// Matches the pager's left-to-right layout: label at column 0, then
+/// [`AFFORDANCE_GAP`], then the first button. The row is only useful when this
+/// much width is available — otherwise the painter would drop every button and
+/// leave either an empty gap or an inert label.
+pub fn affordance_min_action_width(subject: &AffordanceSubject) -> u16 {
+    let policy = affordance_policy(subject, false);
+    let label_w = affordance_display_cols(policy.label.as_ref());
+    let Some(&(btn_label, _)) = policy.buttons.first() else {
+        return 0;
+    };
+    label_w
+        .saturating_add(AFFORDANCE_GAP)
+        .saturating_add(affordance_display_cols(btn_label))
+}
+
+/// Whether at least one action button can be painted for `subject` at `width`.
+///
+/// Shared by row reservation (`apply_affordance_rows`), the painter, and
+/// hit-testing: a row is reserved only when this is true, and a button is
+/// painted/clickable only when its own segment also fits.
+#[inline]
+pub fn affordance_row_fits(subject: &AffordanceSubject, width: u16) -> bool {
+    let policy = affordance_policy(subject, false);
+    let label_w = affordance_display_cols(policy.label.as_ref());
+    let Some(&(btn_label, _)) = policy.buttons.first() else {
+        return false;
+    };
+    let btn_col = label_w.saturating_add(AFFORDANCE_GAP);
+    affordance_segment_fits(btn_col, btn_label, width)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +175,55 @@ mod tests {
         assert_eq!(table.label, Cow::Borrowed(TABLE_LABEL));
         assert_eq!(table.buttons, vec![(AFFORDANCE_COPY, AffordanceKind::Copy)]);
         assert_eq!(table.status, None);
+    }
+
+    #[test]
+    fn mermaid_row_fits_at_first_button_edge_not_below() {
+        // `◇ mermaid` (9) + gap (3) + `[Open Image]` (12) = 24.
+        let min = affordance_min_action_width(&AffordanceSubject::Mermaid);
+        assert_eq!(min, 24);
+        assert!(affordance_row_fits(&AffordanceSubject::Mermaid, min));
+        assert!(!affordance_row_fits(
+            &AffordanceSubject::Mermaid,
+            min.saturating_sub(1)
+        ));
+    }
+
+    #[test]
+    fn code_row_fits_requires_label_gap_and_copy_button() {
+        let subject = AffordanceSubject::Code("rust".into());
+        // `◇ rust` (6) + gap (3) + `[Copy]` (6) = 15.
+        assert_eq!(affordance_min_action_width(&subject), 15);
+        assert!(affordance_row_fits(&subject, 15));
+        assert!(!affordance_row_fits(&subject, 14));
+    }
+
+    #[test]
+    fn segment_fits_matches_row_predicate_for_first_button() {
+        let subject = AffordanceSubject::Table;
+        let policy = affordance_policy(&subject, false);
+        let label_w = affordance_display_cols(policy.label.as_ref());
+        let btn_col = label_w + AFFORDANCE_GAP;
+        let (btn_label, _) = policy.buttons[0];
+        let min = affordance_min_action_width(&subject);
+        assert!(affordance_segment_fits(btn_col, btn_label, min));
+        assert!(!affordance_segment_fits(
+            btn_col,
+            btn_label,
+            min.saturating_sub(1)
+        ));
+        assert_eq!(
+            affordance_row_fits(&subject, min),
+            affordance_segment_fits(btn_col, btn_label, min)
+        );
+    }
+
+    #[test]
+    fn display_cols_treats_diamond_and_ellipsis_as_single_cells() {
+        assert_eq!(affordance_display_cols(MERMAID_LABEL), 9);
+        assert_eq!(affordance_display_cols(TABLE_LABEL), 7);
+        // "rendering diagram" (17) + ellipsis (1) = 18.
+        assert_eq!(affordance_display_cols(MERMAID_RENDERING), 18);
+        assert_eq!(affordance_display_cols(AFFORDANCE_COPY), 6);
     }
 }

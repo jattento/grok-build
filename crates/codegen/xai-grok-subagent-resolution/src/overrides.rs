@@ -69,10 +69,15 @@ pub fn resolve_effective_overrides(
         .or_else(|| role.and_then(|r| r.model.clone()));
 
     // ── Reasoning effort resolution ──────────────────────────────
-    let reasoning_from_override_or_role = overrides
-        .reasoning_effort
-        .clone()
-        .or_else(|| role.and_then(|r| r.reasoning_effort.clone()));
+    // Router-default effort is lowest precedence (after role and persona).
+    let reasoning_from_override_or_role = if overrides.reasoning_effort_is_router_default {
+        role.and_then(|r| r.reasoning_effort.clone())
+    } else {
+        overrides
+            .reasoning_effort
+            .clone()
+            .or_else(|| role.and_then(|r| r.reasoning_effort.clone()))
+    };
 
     // ── Capability mode resolution ───────────────────────────────
     let role_capability_mode = role.and_then(|r| {
@@ -90,8 +95,14 @@ pub fn resolve_effective_overrides(
     // Persona model/reasoning cascade after role
     let model =
         model_from_override_or_role.or_else(|| resolved_persona.and_then(|p| p.model.clone()));
-    let reasoning_effort = reasoning_from_override_or_role
-        .or_else(|| resolved_persona.and_then(|p| p.reasoning_effort.clone()));
+    let reasoning_effort = if overrides.reasoning_effort_is_router_default {
+        reasoning_from_override_or_role
+            .or_else(|| resolved_persona.and_then(|p| p.reasoning_effort.clone()))
+            .or_else(|| overrides.reasoning_effort.clone())
+    } else {
+        reasoning_from_override_or_role
+            .or_else(|| resolved_persona.and_then(|p| p.reasoning_effort.clone()))
+    };
 
     // ── Persona instructions loading ─────────────────────────────
     // Fail-closed: if persona resolution produces an error (file unreadable,
@@ -236,6 +247,7 @@ mod tests {
             model: model.map(String::from),
             model_override_provenance: ModelOverrideProvenance::Harness,
             reasoning_effort: reasoning_effort.map(String::from),
+            reasoning_effort_is_router_default: false,
             primary_provider: None,
             provider_fallback_models: vec![],
             persona: persona.map(String::from),
@@ -412,6 +424,44 @@ mod tests {
         );
         let result = resolve_effective_overrides(&overrides, None, &personas, None, None);
         assert_eq!(result.reasoning_effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn router_default_reasoning_effort_loses_to_role() {
+        let mut overrides = make_overrides(None, None, None, None, Some("high"));
+        overrides.reasoning_effort_is_router_default = true;
+        let role = SubagentRole {
+            reasoning_effort: Some("low".into()),
+            ..Default::default()
+        };
+        let result =
+            resolve_effective_overrides(&overrides, Some(&role), &empty_personas(), None, None);
+        assert_eq!(result.reasoning_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn router_default_reasoning_effort_loses_to_persona() {
+        let mut overrides = make_overrides(None, Some("p"), None, None, Some("high"));
+        overrides.reasoning_effort_is_router_default = true;
+        let mut personas = HashMap::new();
+        personas.insert(
+            "p".to_string(),
+            SubagentPersona {
+                reasoning_effort: Some("medium".into()),
+                instructions: Some("test".into()),
+                ..Default::default()
+            },
+        );
+        let result = resolve_effective_overrides(&overrides, None, &personas, None, None);
+        assert_eq!(result.reasoning_effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn router_default_reasoning_effort_used_when_no_role_or_persona() {
+        let mut overrides = make_overrides(None, None, None, None, Some("high"));
+        overrides.reasoning_effort_is_router_default = true;
+        let result = resolve_effective_overrides(&overrides, None, &empty_personas(), None, None);
+        assert_eq!(result.reasoning_effort.as_deref(), Some("high"));
     }
 
     // ── Isolation precedence ─────────────────────────────────────

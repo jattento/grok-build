@@ -176,9 +176,10 @@ impl AgentView {
         placements: Vec<crate::scrollback::render::DiagramAffordancePlacement>,
         theme: &Theme,
     ) {
-        use crate::scrollback::blocks::mermaid_content::affordance_row;
+        use crate::scrollback::blocks::mermaid_content::{
+            affordance_display_cols, affordance_row, affordance_row_fits, affordance_segment_fits,
+        };
         use ratatui::style::Modifier;
-        use unicode_width::UnicodeWidthStr;
 
         let (hover_col, hover_row) = self.last_mouse_pos;
         for aff in placements {
@@ -187,6 +188,11 @@ impl AgentView {
                 source,
                 subject,
             } = aff;
+            // Same predicate as row reservation: if no action fits, paint nothing
+            // (the blank row should not have been reserved either).
+            if !affordance_row_fits(&subject, rect.width) {
+                continue;
+            }
             // The transient `rendering…` hint shows only while an on-click render
             // for this diagram is in flight (code/table subjects never render).
             let rendering = matches!(
@@ -197,8 +203,8 @@ impl AgentView {
             // A segment is drawn only if it fits wholly within the row width
             // (which already excludes the timestamp reserve), so labels never
             // spill past the content area and hit-rects stay inside the row.
-            let fits =
-                |col: u16, label: &str| col + UnicodeWidthStr::width(label) as u16 <= rect.width;
+            // Shared with overlay-core so paint and hit-test cannot drift.
+            let fits = |col: u16, label: &str| affordance_segment_fits(col, label, rect.width);
 
             // Leading dim, non-clickable `◇ mermaid` label.
             let (label_col, label_text) = row.label;
@@ -226,7 +232,7 @@ impl AgentView {
                     continue;
                 }
                 let bx = rect.x.saturating_add(btn.col);
-                let width = UnicodeWidthStr::width(btn.label) as u16;
+                let width = affordance_display_cols(btn.label);
                 let hit = Rect {
                     x: bx,
                     y: rect.y,

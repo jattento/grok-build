@@ -26,13 +26,13 @@ pub use fallback::{
     ProviderRetryDecision, configured_provider_retry_plan, next_provider_retry, provider_for_model,
     provider_retry_error,
 };
+pub use notify::{
+    Notifier, OsascriptNotifier, SpyNotifier, notify_override, notify_provider_error,
+};
 pub use provider_marker::{
     RETRYABLE_PROVIDER_FAILURE_KEY, apply_retryable_provider_failure_marker,
     is_retryable_provider_failure, merge_retryable_provider_failure,
     retryable_provider_failure_from_data,
-};
-pub use notify::{
-    Notifier, OsascriptNotifier, SpyNotifier, notify_override, notify_provider_error,
 };
 pub use sensor::{
     CachedSensor, CodexBarSensor, MemoryCache, Sensor, SensorError, UsageSnapshot, fetch_providers,
@@ -42,8 +42,13 @@ pub use windows::{classify_window, remaining_percent, window_exhausted};
 
 /// High-level entry used at spawn time.
 ///
-/// Loads config from disk (seeding starter if missing), fetches CodexBar usage
-/// for candidate providers (unless override), decides route, and fires notifies.
+/// Loads config from disk (does **not** seed the starter file — call
+/// [`seed_config_if_missing`] deliberately when bootstrapping), fetches
+/// CodexBar usage for candidate providers (unless override), decides route,
+/// and fires notifies.
+///
+/// An explicit non-blank `model_override` is always honored first, even when
+/// config is missing or unreadable; notification is best-effort only.
 pub fn resolve_for_spawn(
     input: &RouteInput,
     parent_model: Option<&str>,
@@ -54,7 +59,42 @@ pub fn resolve_for_spawn(
     let path = config_path
         .map(|p| p.to_path_buf())
         .unwrap_or_else(resolve_config_path);
-    let _ = seed_config_if_missing(&path);
+
+    // Explicit model override: always honor, independent of config load.
+    if let Some(m) = input
+        .model_override
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        let mut d = RouteDecision {
+            model: Some(m.to_string()),
+            effort: None,
+            tool_ceiling: tool_ceiling_for_task_type(
+                input.task_type.as_deref().unwrap_or("implement"),
+            )
+            .to_string(),
+            source: RouteSource::ModelOverride,
+            notify: vec![NotifyKind::ModelOverride {
+                model: m.to_string(),
+            }],
+            reason: "error-path model override".into(),
+        };
+        if let Some(tt) = input.task_type.as_deref() {
+            d.tool_ceiling = tool_ceiling_for_task_type(tt).to_string();
+        }
+        // Best-effort notify only; config failure must not drop the model.
+        if let Ok(config) = load_config(&path)
+            && config.override_cfg.notify_on_use
+        {
+            for n in &d.notify {
+                if let Err(e) = fire_notify(notifier, n) {
+                    tracing::error!(error = %e, "subagent-router override notification failed");
+                }
+            }
+        }
+        return d;
+    }
+
     let config = match load_config(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -72,41 +112,6 @@ pub fn resolve_for_spawn(
             };
         }
     };
-
-    // Error-path model override: blind honor + notify
-    if let Some(m) = input
-        .model_override
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-    {
-        if config.override_cfg.enabled {
-            let mut d = RouteDecision {
-                model: Some(m.to_string()),
-                effort: None,
-                tool_ceiling: tool_ceiling_for_task_type(
-                    input.task_type.as_deref().unwrap_or("implement"),
-                )
-                .to_string(),
-                source: RouteSource::ModelOverride,
-                notify: vec![NotifyKind::ModelOverride {
-                    model: m.to_string(),
-                }],
-                reason: "error-path model override".into(),
-            };
-            if config.override_cfg.notify_on_use {
-                for n in &d.notify {
-                    if let Err(e) = fire_notify(notifier, n) {
-                        tracing::error!(error = %e, "subagent-router override notification failed");
-                    }
-                }
-            }
-            // Still derive tool ceiling from task_type when present
-            if let Some(tt) = input.task_type.as_deref() {
-                d.tool_ceiling = tool_ceiling_for_task_type(tt).to_string();
-            }
-            return d;
-        }
-    }
 
     let task_type = match input.task_type.as_deref() {
         Some(t) if !t.trim().is_empty() => t.trim(),

@@ -1908,7 +1908,8 @@ fn released_model_windows_flow_through_the_real_resolver() {
                 model: Some(policy.model.to_string()),
                 base_url: Some("http://127.0.0.1.invalid/v1".to_string()),
                 model_provider: Some("cliproxy".to_string()),
-                context_window: Some(1),
+                // No explicit context_window: overlay catalog must fill it in.
+                context_window: None,
                 ..Default::default()
             },
         );
@@ -1934,6 +1935,70 @@ fn released_model_windows_flow_through_the_real_resolver() {
             policy.source
         );
     }
+}
+
+/// Explicit `[model.*].context_window` must survive the overlay catalog post-pass;
+/// models without one still receive the catalog value.
+#[test]
+fn explicit_context_window_outranks_overlay_catalog() {
+    let mut cfg = Config::default();
+    cfg.model_providers.insert(
+        "cliproxy".to_string(),
+        crate::agent::model_providers::ModelProviderConfig::default(),
+    );
+    let policy = overlay_core::model_window_policies()
+        .iter()
+        .find(|p| p.route == "cliproxy")
+        .expect("cliproxy catalog entry");
+    let explicit = 65_536u64;
+    assert_ne!(
+        explicit, policy.context_window,
+        "test needs an explicit value distinct from the catalog"
+    );
+
+    cfg.config_models.insert(
+        policy.model.to_string(),
+        ConfigModelOverride {
+            model: Some(policy.model.to_string()),
+            base_url: Some("http://127.0.0.1.invalid/v1".to_string()),
+            model_provider: Some("cliproxy".to_string()),
+            context_window: Some(explicit),
+            ..Default::default()
+        },
+    );
+    let bare_key = format!("{}-no-cw", policy.model);
+    cfg.config_models.insert(
+        bare_key.clone(),
+        ConfigModelOverride {
+            model: Some(policy.model.to_string()),
+            base_url: Some("http://127.0.0.1.invalid/v1".to_string()),
+            model_provider: Some("cliproxy".to_string()),
+            context_window: None,
+            ..Default::default()
+        },
+    );
+
+    let resolved = resolve_model_list(&cfg, None);
+    assert_eq!(
+        resolved
+            .get(policy.model)
+            .expect("explicit model")
+            .info
+            .context_window
+            .get(),
+        explicit,
+        "explicit [model.*].context_window must outrank the overlay catalog"
+    );
+    assert_eq!(
+        resolved
+            .get(&bare_key)
+            .expect("bare model")
+            .info
+            .context_window
+            .get(),
+        policy.context_window,
+        "without an explicit window the overlay catalog still applies"
+    );
 }
 
 #[test]

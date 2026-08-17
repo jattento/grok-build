@@ -87,30 +87,19 @@ pub fn apply_retryable_provider_failure_marker(
         return if retryable_provider_failure {
             data
         } else {
-            Some(merge_retryable_provider_failure(
-                data,
-                message,
-                false,
-            ))
+            Some(merge_retryable_provider_failure(data, message, false))
         };
     }
     if code == rate_limited_error_code {
         return if retryable_provider_failure {
             data
         } else {
-            Some(merge_retryable_provider_failure(
-                data,
-                message,
-                false,
-            ))
+            Some(merge_retryable_provider_failure(data, message, false))
         };
     }
     match data {
         Some(serde_json::Value::Object(mut map)) if retryable_provider_failure => {
-            map.insert(
-                RETRYABLE_PROVIDER_FAILURE_KEY.to_string(),
-                true.into(),
-            );
+            map.insert(RETRYABLE_PROVIDER_FAILURE_KEY.to_string(), true.into());
             Some(serde_json::Value::Object(map))
         }
         // Non-retryable string/object/None keep the upstream public shape.

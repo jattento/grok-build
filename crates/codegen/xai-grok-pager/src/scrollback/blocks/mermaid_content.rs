@@ -14,27 +14,27 @@
 
 use std::borrow::Cow;
 use std::ops::Range;
+use std::sync::Arc;
 
 use ratatui::text::Line;
-use unicode_width::UnicodeWidthStr;
 use xai_grok_markdown::MarkdownRenderView;
 
 use crate::appearance::RenderMermaid;
 use crate::scrollback::types::{BlockLine, BlockOutput};
 use crate::theme::ThemeKind;
 
-// Subject/kind/label policy lives in overlay-core (dependency-free). Re-export
-// so existing pager import sites keep a single path.
+// Subject/kind/label policy + width fit live in overlay-core (dependency-free).
+// Re-export so existing pager import sites keep a single path.
 pub use overlay_core::affordance::AffordanceSubject;
 pub(crate) use overlay_core::affordance::AffordanceKind;
+pub use overlay_core::affordance::{
+    AFFORDANCE_GAP, affordance_display_cols, affordance_min_action_width, affordance_row_fits,
+    affordance_segment_fits,
+};
 use overlay_core::affordance::affordance_policy;
 
 /// Fence info string identifying a Mermaid diagram.
 pub const MERMAID_INFO: &str = "mermaid";
-
-/// Display-column gap between adjacent affordance-row buttons (and before the
-/// trailing status hint).
-const AFFORDANCE_GAP: u16 = 3;
 
 /// Width quantum (in display columns) for the cache key's width bucket. Renders
 /// are reused across small resizes by bucketing the target width. Only applies
@@ -337,7 +337,7 @@ fn affordance_buttons(
         .iter()
         .map(|&(label, kind)| {
             let button = AffordanceButton { label, kind, col };
-            col += UnicodeWidthStr::width(label) as u16 + AFFORDANCE_GAP;
+            col = col.saturating_add(affordance_display_cols(label) + AFFORDANCE_GAP);
             button
         })
         .collect()
@@ -351,11 +351,13 @@ fn affordance_buttons(
 /// geometry is always computed here.
 pub(crate) fn affordance_row(subject: &AffordanceSubject, rendering: bool) -> AffordanceRow {
     let policy = affordance_policy(subject, rendering);
-    let buttons_start = UnicodeWidthStr::width(policy.label.as_ref()) as u16 + AFFORDANCE_GAP;
+    let buttons_start = affordance_display_cols(policy.label.as_ref()) + AFFORDANCE_GAP;
     let buttons = affordance_buttons(buttons_start, &policy.buttons);
     let status = policy.status.map(|text| {
         let last = &buttons[buttons.len() - 1];
-        let after = last.col + UnicodeWidthStr::width(last.label) as u16 + AFFORDANCE_GAP;
+        let after = last
+            .col
+            .saturating_add(affordance_display_cols(last.label) + AFFORDANCE_GAP);
         (after, text)
     });
     AffordanceRow {
@@ -363,6 +365,18 @@ pub(crate) fn affordance_row(subject: &AffordanceSubject, rendering: bool) -> Af
         buttons,
         status,
     }
+}
+
+/// Immutable copy-affordance identity: subject + source body, no geometry.
+///
+/// Computed once at message construction/finish (like [`MermaidContent`]) so the
+/// per-frame path only re-reads pre-wrap ranges and applies the live width fit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedCopyBlock {
+    /// Label + button set for this block's row.
+    pub subject: AffordanceSubject,
+    /// Text a `[Copy]`/`[Copy Source]` press writes to the clipboard.
+    pub source: Arc<str>,
 }
 
 /// A markdown block that gets a copy affordance row.
@@ -373,7 +387,7 @@ pub struct CopyBlock {
     /// Label + button set for this block's row.
     pub subject: AffordanceSubject,
     /// Text a `[Copy]`/`[Copy Source]` press writes to the clipboard.
-    pub source: String,
+    pub source: Arc<str>,
 }
 
 /// A diagram's clickable affordance row, anchored within a block's output.
@@ -385,8 +399,9 @@ pub struct CopyBlock {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagramAffordance {
     /// Post-wrap, block-relative row offset of the affordance row (its index in
-    /// the block's `output()` lines).
-    pub row_offset: u16,
+    /// the block's `output()` lines). `usize` so scrollbacks taller than
+    /// `u16::MAX` do not wrap the offset onto an unrelated row.
+    pub row_offset: usize,
     /// Diagram source (the fence body); the data every button acts on.
     pub source: String,
     /// Block kind, which determines the row's label and available buttons.
@@ -446,28 +461,34 @@ fn continuation_row(line: Line<'static>) -> BlockLine {
 /// joiner-continuation of the diagram's last body line (so it neither shifts
 /// pre-wrap line indices nor reaches the clipboard), exactly like the fallback
 /// caption. Each returned `row_offset` is the row's final post-wrap index,
-/// accounting for the rows inserted above it. `source_for` is invoked once per
-/// non-empty diagram to supply its Mermaid source. Also used for code/table
-/// ranges: `subject_for` returns `(source, subject)` per range.
+/// accounting for the rows inserted above it. A row is reserved only when
+/// [`affordance_row_fits`] is true at `available_width` — the same predicate the
+/// painter and hit-test use — so a narrow pane never gets an empty gap or an
+/// inert label. `subject_for` returns `(source, subject)` per range index.
 pub(crate) fn apply_affordance_rows(
     output: &mut BlockOutput,
     prewrap_ranges: &[Range<usize>],
+    available_width: u16,
     mut subject_for: impl FnMut(usize) -> (String, AffordanceSubject),
 ) -> Vec<DiagramAffordance> {
     let inserts = diagram_insert_rows(&output.lines, prewrap_ranges);
-    let affordances: Vec<DiagramAffordance> = inserts
-        .iter()
-        .enumerate()
-        .map(|(k, &(insert_at, idx))| {
-            let (source, subject) = subject_for(idx);
-            DiagramAffordance {
-                row_offset: (insert_at + k) as u16,
-                source,
-                subject,
-            }
-        })
-        .collect();
-    for &(insert_at, _) in inserts.iter().rev() {
+    let mut affordances = Vec::with_capacity(inserts.len());
+    let mut accepted_at = Vec::with_capacity(inserts.len());
+    for &(insert_at, idx) in &inserts {
+        let (source, subject) = subject_for(idx);
+        if !affordance_row_fits(&subject, available_width) {
+            continue;
+        }
+        // `accepted_at.len()` is the number of rows already reserved above this
+        // one (inserts are ascending), so the final post-wrap index is exact.
+        affordances.push(DiagramAffordance {
+            row_offset: insert_at + accepted_at.len(),
+            source,
+            subject,
+        });
+        accepted_at.push(insert_at);
+    }
+    for insert_at in accepted_at.into_iter().rev() {
         output
             .lines
             .insert(insert_at, continuation_row(Line::from(String::new())));
@@ -486,6 +507,9 @@ mod tests {
         MERMAID_RENDERING,
     };
     use xai_grok_markdown::StreamingMarkdownRenderer;
+
+    /// Wide enough for every subject kind's first action (and mermaid's full row).
+    const WIDE: u16 = 80;
 
     /// Render markdown to a view and collect the detected mermaid blocks.
     fn detect(src: &str, pretty: bool) -> Vec<MermaidBlock> {
@@ -521,7 +545,7 @@ mod tests {
     fn copy_block_for_fence_carries_exact_body() {
         let blocks = copy_blocks("```bash\nprintf 'hello'\n```\n");
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].source, "printf 'hello'\n");
+        assert_eq!(blocks[0].source.as_ref(), "printf 'hello'\n");
     }
 
     #[test]
@@ -835,7 +859,7 @@ mod tests {
         // Buttons are laid out from `start_col` (which leaves room for the
         // leading `◇ mermaid` label) with a fixed inter-button gap; every button
         // is clickable (no per-button enable flag).
-        let start = UnicodeWidthStr::width(MERMAID_LABEL) as u16 + AFFORDANCE_GAP;
+        let start = affordance_display_cols(MERMAID_LABEL) + AFFORDANCE_GAP;
         let buttons = affordance_buttons(
             start,
             &[
@@ -857,7 +881,7 @@ mod tests {
         );
         assert_eq!(buttons[0].col, start);
         for win in buttons.windows(2) {
-            let prev_end = win[0].col + UnicodeWidthStr::width(win[0].label) as u16;
+            let prev_end = win[0].col + affordance_display_cols(win[0].label);
             assert_eq!(win[1].col, prev_end + AFFORDANCE_GAP, "fixed gap: {win:?}");
         }
     }
@@ -867,7 +891,7 @@ mod tests {
         // Display widths: `◇ mermaid` (9) + gap (3) → buttons start at col 12;
         // [Open Image] (12), [Copy Image Path] (17), [Copy Source] (13) with
         // gap-3 between.
-        let start = UnicodeWidthStr::width(MERMAID_LABEL) as u16 + AFFORDANCE_GAP;
+        let start = affordance_display_cols(MERMAID_LABEL) + AFFORDANCE_GAP;
         let idle = affordance_row(&AffordanceSubject::Mermaid, false);
         assert_eq!(idle.label, (0, Cow::Borrowed(MERMAID_LABEL)));
         assert_eq!(
@@ -892,7 +916,7 @@ mod tests {
         // the label and button columns are unchanged.
         let busy = affordance_row(&AffordanceSubject::Mermaid, true);
         let last = busy.buttons[2];
-        let after = last.col + UnicodeWidthStr::width(last.label) as u16 + AFFORDANCE_GAP;
+        let after = last.col + affordance_display_cols(last.label) + AFFORDANCE_GAP;
         assert_eq!(busy.status, Some((after, MERMAID_RENDERING)));
         assert_eq!(busy.label, idle.label);
         assert_eq!(busy.buttons, idle.buttons);
@@ -1001,7 +1025,7 @@ mod tests {
         let mut out = output_with_wraps(&[1, 1, 1, 1]);
         let sources = ["A-->B\n", "C-->D\n"];
         let mut iter = sources.into_iter();
-        let affs = apply_affordance_rows(&mut out, &[0..1, 2..3], |_| {
+        let affs = apply_affordance_rows(&mut out, &[0..1, 2..3], WIDE, |_| {
             (iter.next().unwrap().to_string(), AffordanceSubject::Mermaid)
         });
 
@@ -1033,7 +1057,7 @@ mod tests {
         // The diagram's single body pre-wrap line (index 1) wraps to two rows
         // [1,2]; the affordance row must land after the LAST wrapped row (3).
         let mut out = output_with_wraps(&[1, 2, 1]);
-        let affs = apply_affordance_rows(&mut out, &one(1..2), |_| {
+        let affs = apply_affordance_rows(&mut out, &one(1..2), WIDE, |_| {
             ("A-->B\n".to_string(), AffordanceSubject::Mermaid)
         });
         assert_eq!(affs.len(), 1);
@@ -1041,5 +1065,84 @@ mod tests {
         assert!(matches!(out.lines[3].selectable, Selectable::None));
         // The trailing pre2 row is pushed down, not overwritten.
         assert_eq!(caption_text(&out.lines[4]), "pre2-row0");
+    }
+
+    #[test]
+    fn apply_affordance_rows_reserves_no_row_when_action_cannot_fit() {
+        // Below the code-row minimum (`◇ rust` + gap + `[Copy]` = 15) nothing
+        // is reserved — no phantom gap and no inert label-only row.
+        let subject = AffordanceSubject::Code("rust".into());
+        let min = affordance_min_action_width(&subject);
+        let mut out = output_with_wraps(&[1]);
+        let affs = apply_affordance_rows(&mut out, &one(0..1), min - 1, |_| {
+            ("fn main() {}\n".to_string(), subject.clone())
+        });
+        assert!(affs.is_empty());
+        assert_eq!(out.lines.len(), 1, "narrow width must not insert a gap row");
+        assert!(matches!(out.lines[0].selectable, Selectable::All));
+    }
+
+    #[test]
+    fn apply_affordance_rows_keeps_clickable_row_when_action_fits() {
+        let subject = AffordanceSubject::Code("rust".into());
+        let min = affordance_min_action_width(&subject);
+        let mut out = output_with_wraps(&[1]);
+        let affs = apply_affordance_rows(&mut out, &one(0..1), min, |_| {
+            ("fn main() {}\n".to_string(), subject.clone())
+        });
+        assert_eq!(affs.len(), 1);
+        assert_eq!(affs[0].row_offset, 1);
+        assert_eq!(affs[0].source, "fn main() {}\n");
+        assert_eq!(affs[0].subject, subject);
+        assert!(matches!(out.lines[1].selectable, Selectable::None));
+        // Painter + hit-test share this predicate: a reserved row is always one
+        // where at least one action segment fits.
+        assert!(affordance_row_fits(&affs[0].subject, min));
+        let row = affordance_row(&affs[0].subject, false);
+        let btn = &row.buttons[0];
+        assert!(affordance_segment_fits(btn.col, btn.label, min));
+    }
+
+    #[test]
+    fn diagram_affordance_row_offset_holds_values_beyond_u16_max() {
+        // Direct unit test of the offset type: a scrollback past 65535 rows
+        // must keep the absolute row index, never wrap through `u16`.
+        let aff = DiagramAffordance {
+            row_offset: (u16::MAX as usize) + 1,
+            source: "A-->B\n".into(),
+            subject: AffordanceSubject::Mermaid,
+        };
+        assert_eq!(aff.row_offset, 65_536);
+        // Applying at a large insert position preserves the usize sum.
+        let aff = DiagramAffordance {
+            row_offset: (u16::MAX as usize) + 42,
+            source: "table".into(),
+            subject: AffordanceSubject::Table,
+        };
+        assert!(aff.row_offset > u16::MAX as usize);
+        assert_eq!(aff.row_offset - 42, u16::MAX as usize);
+    }
+
+    #[test]
+    fn apply_affordance_rows_skips_unfittable_but_keeps_later_fittable() {
+        // First subject needs more width than available; second fits. Only the
+        // second row is reserved, and its offset accounts for zero prior inserts.
+        let mut out = output_with_wraps(&[1, 1, 1]);
+        let subjects = [
+            AffordanceSubject::Mermaid, // needs 24
+            AffordanceSubject::Code("rs".into()), // needs 13
+        ];
+        let mut i = 0;
+        let affs = apply_affordance_rows(&mut out, &[0..1, 2..3], 15, |_| {
+            let subject = subjects[i].clone();
+            i += 1;
+            ("body\n".to_string(), subject)
+        });
+        assert_eq!(affs.len(), 1);
+        assert_eq!(affs[0].subject, AffordanceSubject::Code("rs".into()));
+        // Second range ends at prewrap 2 → insert_at 3 before any inserts; with
+        // the mermaid row skipped, final offset stays 3.
+        assert_eq!(affs[0].row_offset, 3);
+        assert_eq!(out.lines.len(), 4);
     }
 }
