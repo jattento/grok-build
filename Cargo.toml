@@ -98,6 +98,7 @@ members = [
     "third_party/mermaid-to-svg",
     "third_party/ordered_hashmap",
     "overlay/overlay-core",
+    "overlay/overlay-conversation",
     "overlay/overlay-subagent-router",
     "overlay/overlay-workflow-control",
 ]

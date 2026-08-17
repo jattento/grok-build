@@ -1892,6 +1892,8 @@ impl SamplingClient {
             request.max_output_tokens = self.defaults.max_completion_tokens;
         }
 
+        overlay_conversation::prepare_request(request, self.api_backend());
+
         Ok(())
     }
 

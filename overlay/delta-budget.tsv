@@ -13,8 +13,11 @@
 #
 # Format: <changed-lines><TAB><path>
 #
-32	Cargo.lock
-3	Cargo.toml
+# 2026-08-17 allow-growth: bidirectional conversation translator
+# (overlay-conversation). Cargo.toml member line, sampler dep + one
+# prepare_request call, lockfile package entry.
+41	Cargo.lock
+4	Cargo.toml
 6	crates/codegen/xai-grok-markdown/src/buffers.rs
 4	crates/codegen/xai-grok-markdown/src/lib.rs
 37	crates/codegen/xai-grok-markdown/src/output.rs
@@ -40,6 +43,8 @@
 5	crates/codegen/xai-grok-pager/src/views/file_search/line_viewer.rs
 5	crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
 4	crates/codegen/xai-grok-pager/src/views/welcome/mod.rs
+1	crates/codegen/xai-grok-sampler/Cargo.toml
+2	crates/codegen/xai-grok-sampler/src/client.rs
 2	crates/codegen/xai-grok-sampling-types/src/messages.rs
 25	crates/codegen/xai-grok-sampling-types/src/types.rs
 3	crates/codegen/xai-grok-shell/Cargo.toml
@@ -76,4 +81,4 @@
 229	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
 6	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
 52	crates/common/xai-tool-types/src/task.rs
-2829	TOTAL
+2842	TOTAL

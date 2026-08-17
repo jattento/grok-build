@@ -21,13 +21,32 @@ Template for new entries:
 
 ### `Cargo.toml`
 
-- What: adds `overlay/overlay-core` and `overlay/overlay-subagent-router` to
+- What: adds `overlay/overlay-core`, `overlay/overlay-conversation`,
+  `overlay/overlay-subagent-router`, and `overlay/overlay-workflow-control` to
   `[workspace] members`.
 - Why here: cargo requires workspace members to be listed in the root manifest,
   and the header of that file says it is auto-generated upstream, so the line
   will keep disappearing on syncs.
 - Retire when: never, while any overlay package exists. Expect a one-line
   conflict per sync; `git rerere` replays the resolution.
+
+### `crates/codegen/xai-grok-sampler/Cargo.toml`
+
+- What: path dependency on `overlay-conversation`.
+- Why here: the sampler owns the last step before a `ConversationRequest` is
+  converted to a backend wire format.
+- Retire when: never, while outgoing requests are translated for the target API.
+
+### `crates/codegen/xai-grok-sampler/src/client.rs`
+
+- What: one call to `overlay_conversation::prepare_request` at the end of
+  `apply_conversation_defaults`, which every conversation send path already
+  runs.
+- Why here: this is the single function that sees both the request clone and
+  the client's `ApiBackend` before Chat Completions / Responses / Messages
+  serialization. Stored session history is not this request and stays intact.
+- Retire when: upstream sanitizes foreign `encrypted_content` / thinking
+  signatures when the target backend cannot decrypt them.
 
 ### `crates/common/xai-tool-types/src/task.rs`
 
