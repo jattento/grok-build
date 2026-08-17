@@ -11,11 +11,21 @@
 # this file from the current tree but refuses to raise any number unless
 # you pass --allow-growth "<reason>", which appends a dated comment.
 #
+# GROWTH 2026-08-17: audit P0/P1 correctness plus history-translation touchpoints from origin/main
+#     crates/codegen/xai-grok-pager/src/app/agent_view/media.rs: 43 > 27 (+16)
+#     crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs: 147 > 99 (+48)
+#     crates/codegen/xai-grok-pager/src/scrollback/blocks/markdown_content.rs: 191 > 83 (+108)
+#     crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs: 400 > 257 (+143)
+#     crates/codegen/xai-grok-shell/src/agent/config.rs: 20 > 11 (+9)
+#     crates/codegen/xai-grok-shell/src/agent/config_tests.rs: 110 > 45 (+65)
+#     crates/codegen/xai-grok-shell/src/session/streaming_capture.rs: 21 > 17 (+4)
+#     crates/codegen/xai-grok-subagent-resolution/src/overrides.rs: 64 > 2 (+62)
+#     crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs: 276 > 229 (+47)
+#     crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs: 9 > 6 (+3)
+#     TOTAL: 3461 > 2842 (+619)
+#
 # Format: <changed-lines><TAB><path>
 #
-# 2026-08-17 allow-growth: bidirectional conversation translator
-# (overlay-conversation). Cargo.toml member line, sampler dep + one
-# prepare_request call, lockfile package entry.
 41	Cargo.lock
 4	Cargo.toml
 6	crates/codegen/xai-grok-markdown/src/buffers.rs
@@ -31,13 +41,13 @@
 2	crates/codegen/xai-grok-pager-render/src/theme/cache.rs
 37	crates/codegen/xai-grok-pager-render/src/theme/mod.rs
 2	crates/codegen/xai-grok-pager/Cargo.toml
-27	crates/codegen/xai-grok-pager/src/app/agent_view/media.rs
+43	crates/codegen/xai-grok-pager/src/app/agent_view/media.rs
 20	crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs
 2	crates/codegen/xai-grok-pager/src/diagnostics/doctor_format_tests.rs
 25	crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs
-99	crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs
-83	crates/codegen/xai-grok-pager/src/scrollback/blocks/markdown_content.rs
-257	crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs
+147	crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs
+191	crates/codegen/xai-grok-pager/src/scrollback/blocks/markdown_content.rs
+400	crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs
 10	crates/codegen/xai-grok-pager/src/scrollback/render.rs
 20	crates/codegen/xai-grok-pager/src/settings/defs.rs
 5	crates/codegen/xai-grok-pager/src/views/file_search/line_viewer.rs
@@ -45,11 +55,12 @@
 4	crates/codegen/xai-grok-pager/src/views/welcome/mod.rs
 1	crates/codegen/xai-grok-sampler/Cargo.toml
 2	crates/codegen/xai-grok-sampler/src/client.rs
+120	crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs
 2	crates/codegen/xai-grok-sampling-types/src/messages.rs
 25	crates/codegen/xai-grok-sampling-types/src/types.rs
 3	crates/codegen/xai-grok-shell/Cargo.toml
-11	crates/codegen/xai-grok-shell/src/agent/config.rs
-45	crates/codegen/xai-grok-shell/src/agent/config_tests.rs
+20	crates/codegen/xai-grok-shell/src/agent/config.rs
+110	crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 5	crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
 10	crates/codegen/xai-grok-shell/src/agent/subagent/attempt_runner.rs
 146	crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
@@ -64,21 +75,21 @@
 2	crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
 11	crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
 623	crates/codegen/xai-grok-shell/src/session/acp_session_impl/workflow.rs
-5	crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
+2	crates/codegen/xai-grok-shell/src/session/acp_session_tests/inline_auto_compact_flow_tests.rs
 8	crates/codegen/xai-grok-shell/src/session/acp_session_tests/replay_buffer_send_update_tests.rs
 1	crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
 58	crates/codegen/xai-grok-shell/src/session/commands.rs
 3	crates/codegen/xai-grok-shell/src/session/compaction.rs
-5	crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
+2	crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
 55	crates/codegen/xai-grok-shell/src/session/handle.rs
-17	crates/codegen/xai-grok-shell/src/session/streaming_capture.rs
+21	crates/codegen/xai-grok-shell/src/session/streaming_capture.rs
 179	crates/codegen/xai-grok-shell/src/session/workflow/manager.rs
-2	crates/codegen/xai-grok-subagent-resolution/src/overrides.rs
+64	crates/codegen/xai-grok-subagent-resolution/src/overrides.rs
 1	crates/codegen/xai-grok-tools/Cargo.toml
 11	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs
 23	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_state.rs
 80	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
-229	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
-6	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
+276	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
+9	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
 52	crates/common/xai-tool-types/src/task.rs
-2842	TOTAL
+3461	TOTAL
