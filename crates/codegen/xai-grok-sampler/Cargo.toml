@@ -11,6 +11,7 @@ xai-grok-auth = { workspace = true }
 xai-grok-extra-ca = { workspace = true }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
 xai-grok-version = { workspace = true }
+overlay-conversation = { path = "../../../overlay/overlay-conversation" }
 
 # External
 async-openai = { workspace = true }
