@@ -17,6 +17,12 @@
 //! stream stores signatures on items with an empty `id`; the Responses API
 //! always stamps a stable id (`rs_*`, `tco_*`, …).
 
+mod structured_output;
+
+pub use structured_output::{
+    STRUCTURED_OUTPUT_TOOL, prepare_structured_output, structured_output_text,
+};
+
 use xai_grok_sampling_types::{
     ApiBackend, ConversationItem, ConversationRequest, reasoning_item_text, rs,
 };

@@ -112,7 +112,7 @@ impl SessionActor {
             .unwrap_or_else(|| self.models_manager.current_model_id().0.to_string());
         let session_id = self.session_info.id.to_string();
         let mut last_error = String::new();
-        for _ in 0..2 {
+        for model in overlay_core::goal_eval::evaluator_models(&active_model) {
             let client = match self.prepare_chat_completion(false).await {
                 Ok(client) => client,
                 Err(error) => {
@@ -120,13 +120,14 @@ impl SessionActor {
                     continue;
                 }
             };
-            let request = build_goal_evaluator_request(
+            let mut request = build_goal_evaluator_request(
                 &objective,
                 &transcript,
                 plan.as_deref(),
-                active_model.clone(),
+                model,
                 &session_id,
             );
+            overlay_conversation::prepare_structured_output(&mut request, client.api_backend());
             let response = match client.conversation_collect(request).await {
                 Ok(response) => response,
                 Err(error) => {
@@ -146,7 +147,8 @@ impl SessionActor {
                 last_error = "goal evaluator response omitted usage accounting".to_string();
                 continue;
             }
-            match parse_goal_evaluator_verdict(&response.assistant_text()) {
+            let payload = overlay_conversation::structured_output_text(&response);
+            match parse_goal_evaluator_verdict(&payload) {
                 Ok(verdict) => return Ok(verdict),
                 Err(error) => last_error = error.to_string(),
             }

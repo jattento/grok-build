@@ -147,6 +147,7 @@ xai-token-estimation = { workspace = true }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
 xai-grok-tools = { path = "../xai-grok-tools" }
 overlay-core = { path = "../../../overlay/overlay-core" }
+overlay-conversation = { path = "../../../overlay/overlay-conversation" }
 overlay-subagent-router = { path = "../../../overlay/overlay-subagent-router" }
 overlay-workflow-control = { path = "../../../overlay/overlay-workflow-control" }
 xai-tty-utils = { workspace = true }

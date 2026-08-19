@@ -79,7 +79,8 @@ pub(crate) enum GoalEvaluatorParseError {
 pub(crate) fn parse_goal_evaluator_verdict(
     raw: &str,
 ) -> Result<GoalEvaluatorVerdict, GoalEvaluatorParseError> {
-    serde_json::from_str::<GoalEvaluatorVerdict>(raw.trim())
+    let json = overlay_core::goal_eval::extract_json_object(raw).unwrap_or(raw.trim());
+    serde_json::from_str::<GoalEvaluatorVerdict>(json)
         .map_err(|error| GoalEvaluatorParseError::InvalidJson(error.to_string()))?
         .validate()
 }
@@ -267,5 +268,20 @@ mod tests {
         assert!(request.hosted_tools.is_empty());
         assert!(request.json_schema.is_some());
         assert_eq!(request.model.as_deref(), Some("small"));
+    }
+
+    #[test]
+    fn parses_object_buried_in_review_prose_or_fence() {
+        let inner = r#"{"decision":"continue","evidence":"observed evidence","next_step":"do one thing","blocker_key":""}"#;
+        let leaked = format!("<review>Doing.\n{inner}\n");
+        assert_eq!(
+            parse_goal_evaluator_verdict(&leaked).unwrap().decision,
+            GoalEvaluatorDecision::Continue
+        );
+        let fenced = format!("```json\n{inner}\n```");
+        assert_eq!(
+            parse_goal_evaluator_verdict(&fenced).unwrap().decision,
+            GoalEvaluatorDecision::Continue
+        );
     }
 }
