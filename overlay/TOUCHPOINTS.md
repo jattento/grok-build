@@ -77,11 +77,15 @@ Template for new entries:
 
 ### `crates/codegen/xai-grok-shell/Cargo.toml`
 
-- What: path dependencies on `overlay-subagent-router` and `overlay-core`.
-- Why here: the live child session owns retrying a failed model turn, and the
-  final model resolver must apply the fork-owned context-window policy.
-- Retire when: upstream exposes equivalent provider fallback and route-specific
-  model-policy hooks.
+- What: path dependencies on `overlay-subagent-router`, `overlay-core`, and
+  `overlay-conversation`.
+- Why here: the live child session owns retrying a failed model turn, the
+  final model resolver must apply the fork-owned context-window policy, and
+  the hidden `/goal` evaluator must reuse overlay conversation translation
+  for Messages-backend structured output.
+- Retire when: upstream exposes equivalent provider fallback, route-specific
+  model-policy hooks, and a Messages-backend structured-output path for
+  hidden judge calls.
 
 ### `crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs`
 ### `crates/codegen/xai-grok-shell/src/extensions/mod.rs`
@@ -130,6 +134,24 @@ Template for new entries:
   otherwise does not own.
 - Retire when: upstream exposes structured launch without a completion turn and
   a first-class resume path that awaits prior-run retirement.
+
+### `crates/codegen/xai-grok-shell/src/session/goal_evaluator.rs`
+
+- What: `parse_goal_evaluator_verdict` unwraps the first JSON object from
+  leaked CoT / markdown fences before the strict schema parse.
+- Why here: the verdict type and `deny_unknown_fields` parser are shell-private;
+  overlay only supplies the extractor.
+- Retire when: upstream's evaluator accepts fenced JSON or tool-call arguments.
+
+### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/goal.rs`
+
+- What: evaluator attempts session model, then `grok-4.6`, then
+  `claude-sonnet-5`; on Messages it routes the schema through the overlay
+  `StructuredOutput` tool instead of `assistant_text()`.
+- Why here: `evaluate_goal_round` owns the hidden sampling client and fail-closed
+  pause; the model list and request rewrite live in overlay.
+- Retire when: upstream's hidden `/goal` judge uses the same structured-output
+  contract as the agent turn loop and does not inherit the pane model.
 
 ### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs`
 

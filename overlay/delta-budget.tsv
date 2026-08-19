@@ -11,22 +11,9 @@
 # this file from the current tree but refuses to raise any number unless
 # you pass --allow-growth "<reason>", which appends a dated comment.
 #
-# GROWTH 2026-08-17: audit P0/P1 correctness plus history-translation touchpoints from origin/main
-#     crates/codegen/xai-grok-pager/src/app/agent_view/media.rs: 43 > 27 (+16)
-#     crates/codegen/xai-grok-pager/src/scrollback/blocks/agent.rs: 147 > 99 (+48)
-#     crates/codegen/xai-grok-pager/src/scrollback/blocks/markdown_content.rs: 191 > 83 (+108)
-#     crates/codegen/xai-grok-pager/src/scrollback/blocks/mermaid_content.rs: 400 > 257 (+143)
-#     crates/codegen/xai-grok-shell/src/agent/config.rs: 20 > 11 (+9)
-#     crates/codegen/xai-grok-shell/src/agent/config_tests.rs: 110 > 45 (+65)
-#     crates/codegen/xai-grok-shell/src/session/streaming_capture.rs: 21 > 17 (+4)
-#     crates/codegen/xai-grok-subagent-resolution/src/overrides.rs: 64 > 2 (+62)
-#     crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs: 276 > 229 (+47)
-#     crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs: 9 > 6 (+3)
-#     TOTAL: 3461 > 2842 (+619)
-#
 # Format: <changed-lines><TAB><path>
 #
-41	Cargo.lock
+44	Cargo.lock
 4	Cargo.toml
 6	crates/codegen/xai-grok-markdown/src/buffers.rs
 4	crates/codegen/xai-grok-markdown/src/lib.rs
@@ -58,7 +45,7 @@
 120	crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs
 2	crates/codegen/xai-grok-sampling-types/src/messages.rs
 25	crates/codegen/xai-grok-sampling-types/src/types.rs
-3	crates/codegen/xai-grok-shell/Cargo.toml
+4	crates/codegen/xai-grok-shell/Cargo.toml
 20	crates/codegen/xai-grok-shell/src/agent/config.rs
 110	crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 5	crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
@@ -70,6 +57,7 @@
 134	crates/codegen/xai-grok-shell/src/extensions/overlay_workflows.rs
 25	crates/codegen/xai-grok-shell/src/extensions/skills.rs
 149	crates/codegen/xai-grok-shell/src/sampling/error.rs
+10	crates/codegen/xai-grok-shell/src/session/acp_session_impl/goal.rs
 25	crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
 38	crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
 2	crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
@@ -81,6 +69,7 @@
 58	crates/codegen/xai-grok-shell/src/session/commands.rs
 3	crates/codegen/xai-grok-shell/src/session/compaction.rs
 2	crates/codegen/xai-grok-shell/src/session/compaction_inline_auto_compact_flow_tests.rs
+18	crates/codegen/xai-grok-shell/src/session/goal_evaluator.rs
 55	crates/codegen/xai-grok-shell/src/session/handle.rs
 21	crates/codegen/xai-grok-shell/src/session/streaming_capture.rs
 179	crates/codegen/xai-grok-shell/src/session/workflow/manager.rs
@@ -92,4 +81,4 @@
 276	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
 9	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
 52	crates/common/xai-tool-types/src/task.rs
-3461	TOTAL
+3493	TOTAL

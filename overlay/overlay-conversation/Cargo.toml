@@ -7,6 +7,8 @@ publish = false
 description = "Bidirectional conversation translation across API backends"
 
 [dependencies]
+overlay-core = { path = "../overlay-core" }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 xai-grok-sampling-types = { path = "../../crates/codegen/xai-grok-sampling-types" }
 
