@@ -11,9 +11,13 @@
 # this file from the current tree but refuses to raise any number unless
 # you pass --allow-growth "<reason>", which appends a dated comment.
 #
+# GROWTH 2026-08-22: overlay-conversation gained assert_matches as a dev-dependency for the no-vision image-substitution tests, adding one line to Cargo.lock
+#     Cargo.lock: 45 > 44 (+1)
+#     TOTAL: 3494 > 3493 (+1)
+#
 # Format: <changed-lines><TAB><path>
 #
-44	Cargo.lock
+45	Cargo.lock
 4	Cargo.toml
 6	crates/codegen/xai-grok-markdown/src/buffers.rs
 4	crates/codegen/xai-grok-markdown/src/lib.rs
@@ -81,4 +85,4 @@
 276	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
 9	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
 52	crates/common/xai-tool-types/src/task.rs
-3493	TOTAL
+3494	TOTAL

@@ -24,7 +24,7 @@ pub use structured_output::{
 };
 
 use xai_grok_sampling_types::{
-    ApiBackend, ConversationItem, ConversationRequest, reasoning_item_text, rs,
+    ApiBackend, ContentPart, ConversationItem, ConversationRequest, reasoning_item_text, rs,
 };
 
 /// What the translator changed on one request. Zeroes mean the outgoing
@@ -36,11 +36,14 @@ pub struct TranslateReport {
     /// Reasoning items removed entirely (signature-only after a strip, or
     /// thinking the target backend cannot represent).
     pub dropped_reasoning: usize,
+    /// Images replaced with a text placeholder because the target model has
+    /// no vision support (see [`substitute_images_for_no_vision_model`]).
+    pub substituted_images: usize,
 }
 
 impl TranslateReport {
     pub fn changed(&self) -> bool {
-        self.stripped_encrypted > 0 || self.dropped_reasoning > 0
+        self.stripped_encrypted > 0 || self.dropped_reasoning > 0 || self.substituted_images > 0
     }
 }
 
@@ -54,17 +57,91 @@ pub fn prepare_request(request: &mut ConversationRequest, backend: ApiBackend) -
         .reasoning_effort
         .and_then(xai_grok_sampling_types::ReasoningEffort::to_messages_api)
         .is_some();
-    let report = prepare_items(&mut request.items, backend.clone(), thinking_enabled);
+    let mut report = prepare_items(&mut request.items, backend.clone(), thinking_enabled);
+    if let Some(model) = request.model.as_deref() {
+        if !overlay_core::supports_vision(model) {
+            report.substituted_images +=
+                substitute_images_for_no_vision_model(&mut request.items, model);
+        }
+    }
     if report.changed() {
         tracing::info!(
             ?backend,
             thinking_enabled,
             stripped_encrypted = report.stripped_encrypted,
             dropped_reasoning = report.dropped_reasoning,
+            substituted_images = report.substituted_images,
             "overlay-conversation: translated history for target backend"
         );
     }
     report
+}
+
+/// Replaces every image in `items` with a text placeholder for a model that
+/// cannot see images, instead of letting it reach the provider and error out
+/// (or be silently dropped) after a full round trip. The placeholder tells
+/// the agent where the image is so it can act on it explicitly — read or
+/// describe it with a tool, delegate to a vision-capable model, or ask the
+/// user — rather than losing it without a trace.
+///
+/// Returns the number of images substituted.
+fn substitute_images_for_no_vision_model(items: &mut [ConversationItem], model: &str) -> usize {
+    let mut substituted = 0;
+    for item in items {
+        match item {
+            ConversationItem::User(user) => {
+                for part in &mut user.content {
+                    if let ContentPart::Image { url } = part {
+                        *part = ContentPart::Text {
+                            text: std::sync::Arc::<str>::from(no_vision_placeholder(url, model)),
+                        };
+                        substituted += 1;
+                    }
+                }
+            }
+            ConversationItem::ToolResult(t) if !t.images.is_empty() => {
+                // Unlike a user message, a `ToolResult`'s `images` field is
+                // not folded into `content` by the wire-format converters, so
+                // a placeholder left there would never reach the model (see
+                // `strip_images_where`'s doc comment). Note each image's
+                // location in `content`, the field the converters do emit,
+                // and drop the field.
+                let notes: Vec<String> = t
+                    .images
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentPart::Image { url } => Some(no_vision_placeholder(url, model)),
+                        ContentPart::Text { .. } => None,
+                    })
+                    .collect();
+                substituted += notes.len();
+                t.images.clear();
+                if !notes.is_empty() {
+                    let content = format!("{}\n\n{}", t.content, notes.join("\n"));
+                    t.content = std::sync::Arc::<str>::from(content);
+                }
+            }
+            ConversationItem::ToolResult(_)
+            | ConversationItem::System(_)
+            | ConversationItem::Assistant(_)
+            | ConversationItem::BackendToolCall(_)
+            | ConversationItem::Reasoning(_) => {}
+        }
+    }
+    substituted
+}
+
+/// Text substituted for one image when `model` cannot see it. Surfaces the
+/// image's location when the URL carries one (the `file://` convention used
+/// for placeholder-image attachments); falls back to the raw URL otherwise.
+fn no_vision_placeholder(url: &str, model: &str) -> String {
+    let location = url.strip_prefix("file://").unwrap_or(url);
+    format!(
+        "[image attached at {location} — {model} has no vision support and \
+         cannot see it directly. Read or describe it with a tool, delegate \
+         to a vision-capable model, or ask the user to describe it, as the \
+         task requires.]"
+    )
 }
 
 /// Same rewrite as [`prepare_request`], operating on a bare item list.
@@ -160,6 +237,7 @@ fn reasoning_survives(r: &rs::ReasoningItem) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert_matches::assert_matches;
     use xai_grok_sampling_types::{ConversationItem, ReasoningEffort};
 
     fn anthropic_thinking(text: &str, signature: &str) -> ConversationItem {
@@ -226,7 +304,8 @@ mod tests {
             report,
             TranslateReport {
                 stripped_encrypted: 1,
-                dropped_reasoning: 0
+                dropped_reasoning: 0,
+                substituted_images: 0
             }
         );
         assert_eq!(encrypted(&items), vec![None]);
@@ -260,7 +339,8 @@ mod tests {
             report,
             TranslateReport {
                 stripped_encrypted: 1,
-                dropped_reasoning: 1
+                dropped_reasoning: 1,
+                substituted_images: 0
             }
         );
         assert!(reasoning_texts(&items).is_empty());
@@ -381,5 +461,79 @@ mod tests {
         let report = prepare_items(&mut items, ApiBackend::Responses, true);
         assert_eq!(report, TranslateReport::default());
         assert_eq!(items.len(), before);
+    }
+
+    // ========== no-vision image substitution tests ==========
+
+    #[test]
+    fn no_vision_model_gets_a_located_placeholder_instead_of_the_image() {
+        let mut user = ConversationItem::user("describe this");
+        user.add_image("file:///Users/me/screenshot.png");
+        let mut req = ConversationRequest::from_items(vec![user]);
+        req.model = Some("opencode-glm-5.1".to_string());
+
+        let report = prepare_request(&mut req, ApiBackend::ChatCompletions);
+
+        assert_eq!(report.substituted_images, 1);
+        assert!(report.changed());
+        let ConversationItem::User(user) = &req.items[0] else {
+            panic!("expected a user item");
+        };
+        assert_eq!(user.content.len(), 2);
+        assert_matches!(&user.content[1], ContentPart::Text { text } => {
+            assert!(text.contains("/Users/me/screenshot.png"), "{text}");
+            assert!(text.contains("opencode-glm-5.1"), "{text}");
+        });
+    }
+
+    #[test]
+    fn no_vision_model_notes_a_dropped_tool_result_image_in_its_content() {
+        let tool_result = ConversationItem::tool_result_with_images(
+            "call-1",
+            "file read ok",
+            vec![ContentPart::Image {
+                url: std::sync::Arc::<str>::from("file:///tmp/read.png"),
+            }],
+        );
+        let mut req = ConversationRequest::from_items(vec![tool_result]);
+        req.model = Some("opencode-hy3".to_string());
+
+        let report = prepare_request(&mut req, ApiBackend::ChatCompletions);
+
+        assert_eq!(report.substituted_images, 1);
+        let ConversationItem::ToolResult(tool_result) = &req.items[0] else {
+            panic!("expected a tool result item");
+        };
+        assert!(tool_result.images.is_empty());
+        assert!(tool_result.content.contains("file read ok"));
+        assert!(tool_result.content.contains("/tmp/read.png"));
+    }
+
+    #[test]
+    fn vision_capable_model_keeps_the_image_untouched() {
+        let mut user = ConversationItem::user("describe this");
+        user.add_image("data:image/png;base64,abc123");
+        let mut req = ConversationRequest::from_items(vec![user]);
+        req.model = Some("claude-sonnet-5".to_string());
+
+        let report = prepare_request(&mut req, ApiBackend::Messages);
+
+        assert_eq!(report.substituted_images, 0);
+        let ConversationItem::User(user) = &req.items[0] else {
+            panic!("expected a user item");
+        };
+        assert_matches!(&user.content[1], ContentPart::Image { url } => {
+            assert_eq!(url.as_ref(), "data:image/png;base64,abc123");
+        });
+    }
+
+    #[test]
+    fn no_vision_model_with_no_images_reports_no_change() {
+        let mut req = ConversationRequest::from_items(vec![ConversationItem::user("hi")]);
+        req.model = Some("opencode-qwen3.7-max".to_string());
+
+        let report = prepare_request(&mut req, ApiBackend::Responses);
+
+        assert_eq!(report, TranslateReport::default());
     }
 }

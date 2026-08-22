@@ -281,6 +281,31 @@ pub fn effective_context_window(
     std::num::NonZeroU64::new(policy.context_window).expect("model window policies are non-zero")
 }
 
+/// Model slugs Grok's own display names mark "(NV)" (no vision): sending
+/// them an image errors out or is silently rejected by the provider.
+/// Hand-verified against the running app's model picker; kept in sync with
+/// `overlay/subagent-router/subagent-router.starter.toml`'s per-model
+/// `supports_vision` table, the other place this fork tracks the same fact.
+const NO_VISION_MODELS: &[&str] = &[
+    "opencode-deepseek-v4-flash",
+    "opencode-deepseek-v4-pro",
+    "opencode-glm-5.1",
+    "opencode-glm-5.2",
+    "opencode-hy3",
+    "opencode-minimax-m2.7",
+    "opencode-qwen3.7-max",
+];
+
+/// Whether `model` accepts image content in its conversation input.
+///
+/// An unrecognized model defaults to `true` (vision-capable) so a model this
+/// list has not caught up with is never degraded unnecessarily; the
+/// provider's own error response plus the existing reactive image-strip
+/// retry still cover a wrong guess.
+pub fn supports_vision(model: &str) -> bool {
+    !NO_VISION_MODELS.contains(&model)
+}
+
 /// Marker appended to the version badge on the welcome screen, so the running
 /// build is identifiable from inside the TUI. The startup banner goes to
 /// stderr and is wiped when the alternate screen takes over, which makes it
@@ -430,6 +455,56 @@ mod tests {
                     .iter()
                     .any(|policy| policy.model == model),
                 "{model} needs a model-window policy"
+            );
+        }
+    }
+
+    #[test]
+    fn no_vision_list_matches_known_nv_and_vision_models() {
+        assert!(!super::supports_vision("opencode-glm-5.1"));
+        assert!(!super::supports_vision("opencode-deepseek-v4-pro"));
+        assert!(super::supports_vision("claude-sonnet-5"));
+        assert!(super::supports_vision("grok-4.6"));
+    }
+
+    #[test]
+    fn unknown_model_defaults_to_vision_capable() {
+        assert!(super::supports_vision("some-future-model-not-in-any-list"));
+    }
+
+    /// Keeps `NO_VISION_MODELS` from drifting away from the router's own
+    /// hand-verified `supports_vision` table, the other place this fork
+    /// tracks the same fact (see `NO_VISION_MODELS`'s doc comment).
+    #[test]
+    fn no_vision_list_matches_the_router_catalogs_supports_vision_table() {
+        let starter = include_str!("../../subagent-router/subagent-router.starter.toml");
+        let mut current_model: Option<String> = None;
+        for line in starter.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("[models.") {
+                current_model = Some(
+                    trimmed
+                        .trim_start_matches("[models.")
+                        .trim_end_matches(']')
+                        .trim_matches('"')
+                        .to_owned(),
+                );
+                continue;
+            }
+            let Some(rest) = trimmed.strip_prefix("supports_vision") else {
+                continue;
+            };
+            let Some(model) = current_model.take() else {
+                continue;
+            };
+            let router_supports_vision = rest.trim_start_matches([' ', '='])
+                .trim_start()
+                .starts_with("true");
+            assert_eq!(
+                super::supports_vision(&model),
+                router_supports_vision,
+                "{model}: overlay_core::supports_vision disagrees with the \
+                 router catalog's supports_vision"
             );
         }
     }
