@@ -1255,6 +1255,7 @@ pub(crate) async fn run_shell_child(
             .send(SessionCommand::SetSessionModel {
                 sampling_config,
                 use_concise: false,
+                is_family_switch: false,
                 apply_prompt_override: false,
                 skip_prompt_rewrite: true,
                 auto_compact_threshold_percent: ctx
