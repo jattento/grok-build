@@ -11,9 +11,9 @@
 # this file from the current tree but refuses to raise any number unless
 # you pass --allow-growth "<reason>", which appends a dated comment.
 #
-# GROWTH 2026-08-22: overlay-conversation gained assert_matches as a dev-dependency for the no-vision image-substitution tests, adding one line to Cargo.lock
-#     Cargo.lock: 45 > 44 (+1)
-#     TOTAL: 3494 > 3493 (+1)
+# GROWTH 2026-08-22: commit the is_family_switch fix that was already accounted for in the working-tree budget pre-push check but never committed
+#     crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs: 147 > 146 (+1)
+#     TOTAL: 3495 > 3494 (+1)
 #
 # Format: <changed-lines><TAB><path>
 #
@@ -54,7 +54,7 @@
 110	crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 5	crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
 10	crates/codegen/xai-grok-shell/src/agent/subagent/attempt_runner.rs
-146	crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
+147	crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs
 27	crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs
 20	crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs
 1	crates/codegen/xai-grok-shell/src/extensions/mod.rs
@@ -85,4 +85,4 @@
 276	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
 9	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
 52	crates/common/xai-tool-types/src/task.rs
-3494	TOTAL
+3495	TOTAL
