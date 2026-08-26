@@ -11,9 +11,8 @@
 # this file from the current tree but refuses to raise any number unless
 # you pass --allow-growth "<reason>", which appends a dated comment.
 #
-# GROWTH 2026-08-22: commit the is_family_switch fix that was already accounted for in the working-tree budget pre-push check but never committed
-#     crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs: 147 > 146 (+1)
-#     TOTAL: 3495 > 3494 (+1)
+# GROWTH 2026-08-26: 429-without-Retry-After retry fix in xai-grok-sampler/src/retry.rs
+#     TOTAL: 3575 > 3495 (+80)
 #
 # Format: <changed-lines><TAB><path>
 #
@@ -46,6 +45,7 @@
 4	crates/codegen/xai-grok-pager/src/views/welcome/mod.rs
 1	crates/codegen/xai-grok-sampler/Cargo.toml
 2	crates/codegen/xai-grok-sampler/src/client.rs
+80	crates/codegen/xai-grok-sampler/src/retry.rs
 120	crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs
 2	crates/codegen/xai-grok-sampling-types/src/messages.rs
 25	crates/codegen/xai-grok-sampling-types/src/types.rs
@@ -85,4 +85,4 @@
 276	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
 9	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
 52	crates/common/xai-tool-types/src/task.rs
-3495	TOTAL
+3575	TOTAL
