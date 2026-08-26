@@ -164,6 +164,21 @@ Template for new entries:
   before starting a resume, or the workflow tool no longer accepts
   `resume_from_run_id`.
 
+### `crates/codegen/xai-grok-sampler/src/retry.rs`
+
+- What: a 429 without a server `Retry-After` header falls back to the full
+  exponential-backoff retry budget (same as a 5xx) instead of the short
+  `RATE_LIMIT_RETRY_THRESHOLD` (2) cap. Observed with Claude: a gateway that
+  re-wraps the upstream `rate_limit_error` drops the header, so the tight cap
+  gave up after ~2 attempts and a few seconds of backoff — long before a
+  token-per-minute limit clears — forcing the user to manually resend the
+  same turn repeatedly.
+- Why here: `classify_error` is the single place that turns a `SamplingError`
+  into a `RetryDecision`; there is no lower-rung seam (config/hook) that can
+  change retry classification.
+- Retire when: upstream changes the same branch, or the fork stops proxying
+  Claude requests through a gateway that can drop `Retry-After`.
+
 ### `crates/codegen/xai-grok-shell/src/agent/subagent/attempt_runner.rs`
 ### `crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs`
 

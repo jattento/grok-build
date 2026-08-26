@@ -16,8 +16,15 @@
 //! - `EmptyResponse` (model returned no content/tool calls)
 //!
 //! **Retried with lower cap** ([`RATE_LIMIT_RETRY_THRESHOLD`] = 2):
-//! - 429 (rate limited) — waits the full `Retry-After`, so the attempt
-//!   count is what bounds the total wait
+//! - 429 (rate limited) *with* a server `Retry-After` — waits the full
+//!   hint, so the attempt count is what bounds the total wait.
+//! - A 429 *without* `Retry-After` (e.g. a gateway that re-wraps the
+//!   upstream error and drops the header — observed with Claude's
+//!   `rate_limit_error`) falls back to the full [`DEFAULT_MAX_RETRIES`]
+//!   exponential-backoff budget, identical to the generic 5xx path: with
+//!   no hint, a 2-attempt cap at a few seconds of backoff gives up long
+//!   before a token-per-minute limit actually clears, forcing the caller
+//!   to manually resend.
 //!
 //! **Special handling**:
 //! - 413 / image processing errors → strip images and retry. Debits the
@@ -228,22 +235,37 @@ pub fn classify_error(
         };
     }
 
-    // Rate-limited (429): cap retries at the rate-limit threshold to
-    // avoid burning long waits.
+    // Rate-limited (429). A server `Retry-After` is a correctly-sized
+    // wait, so cap retries at the (short) rate-limit threshold to avoid
+    // burning long waits back to back. Without that hint (a gateway
+    // that re-wraps the upstream error can drop the header — observed
+    // with Claude's `rate_limit_error`) the short cap gives up in a
+    // handful of seconds, long before a token-per-minute limit clears;
+    // fall back to the same exponential-backoff budget as the generic
+    // retryable path instead.
     if err.is_rate_limited() {
         let next_attempt = retry_count + 1;
-        // `next_attempt >= 1` also catches an effective cap of 0.
-        if next_attempt >= max_retries.min(rate_limit_threshold) {
-            return RetryDecision::Fatal(clone_error(err));
+        match err.retry_after() {
+            Some(secs) => {
+                // `next_attempt >= 1` also catches an effective cap of 0.
+                if next_attempt >= max_retries.min(rate_limit_threshold) {
+                    return RetryDecision::Fatal(clone_error(err));
+                }
+                return RetryDecision::RetryWithBackoff {
+                    backoff: Duration::from_secs(secs),
+                    is_rate_limited: true,
+                };
+            }
+            None => {
+                if next_attempt >= max_retries {
+                    return RetryDecision::Fatal(clone_error(err));
+                }
+                return RetryDecision::RetryWithBackoff {
+                    backoff: retry_backoff_with_jitter(next_attempt),
+                    is_rate_limited: true,
+                };
+            }
         }
-        let backoff = err
-            .retry_after()
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| retry_backoff_with_jitter(next_attempt));
-        return RetryDecision::RetryWithBackoff {
-            backoff,
-            is_rate_limited: true,
-        };
     }
 
     // Generic retryable transport / 5xx errors. First retry rebuilds
@@ -693,14 +715,38 @@ mod tests {
     }
 
     #[test]
-    fn classify_rate_limited_capped_at_threshold() {
-        let err = api_err(StatusCode::TOO_MANY_REQUESTS, "slow");
+    fn classify_rate_limited_with_retry_after_capped_at_threshold() {
+        let err = api_err_with_retry_after(StatusCode::TOO_MANY_REQUESTS, 7);
         // retry_count=1, threshold=2 -> next_attempt=2 >= 2 -> Fatal.
         match classify_error(&err, 1, 5, RATE_LIMIT_RETRY_THRESHOLD) {
             RetryDecision::Fatal(SamplingError::Api { status, .. }) => {
                 assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
             }
             other => panic!("expected Fatal at threshold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_rate_limited_without_retry_after_uses_full_retry_budget() {
+        // No `Retry-After` (e.g. a gateway that re-wraps the upstream 429
+        // and drops the header): the tight rate-limit threshold must not
+        // apply, or the caller gives up in a handful of seconds instead of
+        // getting the same ~5.5 min exponential-backoff budget as a 5xx.
+        let err = api_err(StatusCode::TOO_MANY_REQUESTS, "slow");
+        // retry_count=1, threshold=2 would be Fatal under the old rule;
+        // with max_retries=5 it must still retry.
+        match classify_error(&err, 1, 5, RATE_LIMIT_RETRY_THRESHOLD) {
+            RetryDecision::RetryWithBackoff {
+                is_rate_limited, ..
+            } => assert!(is_rate_limited),
+            other => panic!("expected RetryWithBackoff past the threshold, got {other:?}"),
+        }
+        // Still bounded by max_retries, same as every other retryable path.
+        match classify_error(&err, 4, 5, RATE_LIMIT_RETRY_THRESHOLD) {
+            RetryDecision::Fatal(SamplingError::Api { status, .. }) => {
+                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+            }
+            other => panic!("expected Fatal once max_retries is exhausted, got {other:?}"),
         }
     }
 
