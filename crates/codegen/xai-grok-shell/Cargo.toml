@@ -146,6 +146,7 @@ xai-grok-session-search = { workspace = true }
 xai-token-estimation = { workspace = true }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
 xai-grok-tools = { path = "../xai-grok-tools" }
+overlay-coinor-tools = { path = "../../../overlay/overlay-coinor-tools" }
 overlay-core = { path = "../../../overlay/overlay-core" }
 overlay-conversation = { path = "../../../overlay/overlay-conversation" }
 overlay-subagent-router = { path = "../../../overlay/overlay-subagent-router" }

@@ -1,0 +1,24 @@
+[package]
+name = "overlay-coinor-tools"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+publish = false
+description = "Native Grok tools available only when launched inside Conan Code (github.com/jattento/coinor)"
+
+[dependencies]
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+xai-grok-tools = { workspace = true }
+xai-tool-protocol = { workspace = true }
+xai-tool-runtime = { workspace = true }
+xai-tool-types = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

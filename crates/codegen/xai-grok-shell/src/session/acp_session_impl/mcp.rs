@@ -901,6 +901,28 @@ impl SessionActor {
                 mcp_state.has_acp_servers(),
             )
         };
+        // Conan Code (github.com/jattento/coinor): exposes `point_to_code`
+        // when this process was launched inside it (see
+        // `overlay/overlay-coinor-tools` and Conan Code's ADR 0019). Runs
+        // once per session, independent of MCP config; a failure here must
+        // never break ordinary session initialization.
+        if std::env::var("CONAN_CODE_CONTROL_SOCKET").is_ok() {
+            let tool_bridge = self.agent.borrow().tool_bridge().clone();
+            if let Err(e) = tool_bridge
+                .register_mcp_tools(
+                    "point_to_code".to_string(),
+                    overlay_coinor_tools::PointToCodeTool,
+                    None,
+                )
+                .await
+            {
+                tracing::warn!(
+                    session_id = %self.session_info.id.0,
+                    error = %e,
+                    "failed to register Conan Code's point_to_code tool"
+                );
+            }
+        }
         if mcp_server_configs.is_empty() && !has_acp {
             let mut mcp_state = self.mcp_state.lock().await;
             if mcp_state.generation() == generation {

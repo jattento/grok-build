@@ -103,6 +103,7 @@ members = [
     "overlay/overlay-conversation",
     "overlay/overlay-subagent-router",
     "overlay/overlay-workflow-control",
+    "overlay/overlay-coinor-tools",
 ]
 
 [workspace.package]

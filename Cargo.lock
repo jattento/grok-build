@@ -7294,6 +7294,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
+name = "overlay-coinor-tools"
+version = "0.1.0"
+dependencies = [
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "xai-grok-tools",
+ "xai-tool-protocol",
+ "xai-tool-runtime",
+ "xai-tool-types",
+]
+
+[[package]]
 name = "overlay-conversation"
 version = "0.1.0"
 dependencies = [
@@ -14214,6 +14230,7 @@ dependencies = [
  "notify-debouncer-mini",
  "nucleo",
  "obfstr",
+ "overlay-coinor-tools",
  "overlay-conversation",
  "overlay-core",
  "overlay-subagent-router",

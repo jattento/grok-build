@@ -22,13 +22,40 @@ Template for new entries:
 ### `Cargo.toml`
 
 - What: adds `overlay/overlay-core`, `overlay/overlay-conversation`,
-  `overlay/overlay-subagent-router`, and `overlay/overlay-workflow-control` to
-  `[workspace] members`.
+  `overlay/overlay-subagent-router`, `overlay/overlay-workflow-control`, and
+  `overlay/overlay-coinor-tools` to `[workspace] members`.
 - Why here: cargo requires workspace members to be listed in the root manifest,
   and the header of that file says it is auto-generated upstream, so the line
   will keep disappearing on syncs.
 - Retire when: never, while any overlay package exists. Expect a one-line
   conflict per sync; `git rerere` replays the resolution.
+
+### `crates/codegen/xai-grok-shell/Cargo.toml`
+
+- What: path dependency on `overlay-coinor-tools`.
+- Why here: cargo requires the dependency declared where it is used; the tool
+  registration call lives in this crate's session setup (see the `mcp.rs`
+  entry below).
+- Retire when: never, while `point_to_code` is a native tool.
+
+### `crates/codegen/xai-grok-shell/src/session/acp_session_impl/mcp.rs`
+
+- What: at the top of `ensure_mcp_tools_initialized` (once per session,
+  independent of MCP config), registers `overlay-coinor-tools`'
+  `point_to_code` tool via the existing `tool_bridge.register_mcp_tools(...)`
+  call, gated on the `CONAN_CODE_CONTROL_SOCKET` env var Conan Code
+  (<https://github.com/jattento/coinor>) sets on the root Grok process it
+  launches. Absent that var (every launch outside Conan Code), this is a
+  no-op; a registration failure is logged and swallowed, never propagated.
+- Why here: `register_mcp_tools`/`FinalizedToolset::register_tool` (the only
+  sanctioned runtime tool-registration entry point — see
+  `xai-grok-tools/src/registry/types.rs`) needs a live `ToolBridge`, which
+  only exists once a session's `SessionActor` is constructed; this is the
+  earliest point in the session lifecycle that already runs unconditionally
+  once per session (real MCP servers or not).
+- Retire when: upstream exposes a session-lifecycle hook (equivalent to a
+  pre/post-tool hook, but at session start) that does not require editing
+  this file directly.
 
 ### `crates/codegen/xai-grok-sampler/Cargo.toml`
 
