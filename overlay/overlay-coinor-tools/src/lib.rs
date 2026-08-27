@@ -145,22 +145,62 @@ impl Tool for PointToCodeTool {
             "lineEnd": args.line_end,
             "comment": args.comment,
         });
-        // `send_request` is blocking socket I/O; keep it off the async
-        // executor's worker thread (same convention as `list_dir`'s
-        // `spawn_list_dir_walk`).
-        tokio::task::spawn_blocking(move || send_request(&credentials.socket_path, &request))
-            .await
-            .map_err(|e| {
-                ToolError::execution(tool_id.clone(), format!("point_to_code was cancelled: {e}"))
-            })?
-            .map_err(|detail| ToolError::execution(tool_id, detail))?;
+        // `send_request_with_retries` is blocking socket I/O; keep it off
+        // the async executor's worker thread (same convention as
+        // `list_dir`'s `spawn_list_dir_walk`).
+        tokio::task::spawn_blocking(move || {
+            send_request_with_retries(&credentials.socket_path, &request)
+        })
+        .await
+        .map_err(|e| {
+            ToolError::execution(tool_id.clone(), format!("point_to_code was cancelled: {e}"))
+        })?
+        .map_err(|detail| ToolError::execution(tool_id, detail))?;
         Ok(PointToCodeOutput { queued: true })
     }
 }
 
+/// One request-per-connection retry loop, delimited so a single slow
+/// response never reads as "this tool doesn't exist" to the model.
+///
+/// Conan Code handles `point-to-code` on its UI main actor (see
+/// `AppCoordinator.handleTerminalControl` in the Conan Code repo). A
+/// request that lands right as a brand-new conversation's terminal
+/// surface is being created can sit queued behind that main-actor work
+/// long enough to blow `send_request`'s read timeout even though Conan
+/// Code is fully healthy — that queuing, not a missing tool, is what
+/// produced repeated real-world failures the model then misreported as
+/// "point_to_code is not available in this session". A queued request
+/// that already reached Conan Code (crossed by a timed-out read, or an
+/// explicit rejection) is safe to retry: at worst it queues the same
+/// tour twice, which the user only notices as the tour reopening.
+const MAX_ATTEMPTS: u32 = 3;
+const RETRY_BACKOFF_MS: [u64; MAX_ATTEMPTS as usize - 1] = [200, 600];
+
+fn send_request_with_retries(socket_path: &str, request: &serde_json::Value) -> Result<(), String> {
+    let mut last_error = String::new();
+    for attempt in 0..MAX_ATTEMPTS {
+        match send_request(socket_path, request) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+        if let Some(&delay_ms) = RETRY_BACKOFF_MS.get(attempt as usize) {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+        }
+    }
+    Err(format!(
+        "point_to_code could not reach Conan Code after {MAX_ATTEMPTS} attempts \
+         (most recent error: {last_error}). This is almost always transient \
+         (Conan Code's UI was briefly busy, e.g. right after opening a new \
+         conversation) rather than the tool being unavailable — wait a moment \
+         and call point_to_code again instead of describing the code in text."
+    ))
+}
+
 /// One line-delimited JSON request/response over Conan Code's private
 /// control socket, matching `coinorctl`'s own transport exactly (see
-/// `CoinorCtl/main.swift`'s `sendRequest`).
+/// `CoinorCtl/main.swift`'s `sendRequest`). A single attempt; retried by
+/// `send_request_with_retries`.
 fn send_request(socket_path: &str, request: &serde_json::Value) -> Result<(), String> {
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|e| format!("could not reach Conan Code's control socket: {e}"))?;
@@ -305,14 +345,20 @@ mod tests {
         let socket_path = dir.path().join("control.sock");
         let listener = UnixListener::bind(&socket_path).unwrap();
 
+        // An explicit `{"ok":false}` rejection is retried exactly like a
+        // transport failure (see `send_request_with_retries`), so this
+        // mock server must answer every attempt the same way, not just
+        // the first.
         let server = std::thread::spawn(move || {
-            let (mut conn, _) = listener.accept().unwrap();
-            let mut buf = String::new();
-            conn.read_to_string(&mut buf).unwrap();
-            conn.write_all(
-                br#"{"ok":false,"error":{"code":"session_unavailable","message":"nope"}}"#,
-            )
-            .unwrap();
+            for _ in 0..MAX_ATTEMPTS {
+                let (mut conn, _) = listener.accept().unwrap();
+                let mut buf = String::new();
+                conn.read_to_string(&mut buf).unwrap();
+                conn.write_all(
+                    br#"{"ok":false,"error":{"code":"session_unavailable","message":"nope"}}"#,
+                )
+                .unwrap();
+            }
         });
 
         set_test_env(CONTROL_SOCKET_ENV, socket_path.to_str().unwrap());
@@ -332,9 +378,106 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(err.detail.contains("nope"));
+        assert!(err.detail.contains("nope"), "detail: {}", err.detail);
+        assert!(
+            err.detail.contains("after 3 attempts"),
+            "detail: {}",
+            err.detail
+        );
 
         server.join().unwrap();
+        clear_test_env(CONTROL_SOCKET_ENV);
+        clear_test_env(CONTROL_TOKEN_ENV);
+        clear_test_env(SESSION_ID_ENV);
+    }
+
+    #[tokio::test]
+    // See the identical `#[allow]` above.
+    #[allow(clippy::await_holding_lock)]
+    // Regression test for the real-world failure this retry loop exists
+    // for: a request that cannot reach Conan Code on the first attempt
+    // (nothing listening yet, mirroring a main actor that hasn't gotten
+    // to `accept()` / `handleTerminalControl` yet) must still succeed
+    // once Conan Code catches up, instead of surfacing as "the tool
+    // isn't available".
+    async fn run_recovers_when_the_first_attempts_cannot_reach_conan_code() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("control.sock");
+        // Deliberately do NOT bind the socket yet: the first `connect()`
+        // must fail with "no such file" the way it would if Conan Code's
+        // control socket were momentarily unavailable.
+
+        let socket_path_for_server = socket_path.clone();
+        let server = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            let listener = UnixListener::bind(&socket_path_for_server).unwrap();
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut buf = String::new();
+            conn.read_to_string(&mut buf).unwrap();
+            conn.write_all(br#"{"ok":true,"result":{}}"#).unwrap();
+        });
+
+        set_test_env(CONTROL_SOCKET_ENV, socket_path.to_str().unwrap());
+        set_test_env(CONTROL_TOKEN_ENV, "tok");
+        set_test_env(SESSION_ID_ENV, "session-1");
+
+        let tool = PointToCodeTool;
+        let output = Tool::run(
+            &tool,
+            ToolCallContext::default(),
+            PointToCodeInput {
+                file_path: "src/lib.rs".to_string(),
+                line_start: 1,
+                line_end: 1,
+                comment: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(output.queued);
+
+        server.join().unwrap();
+        clear_test_env(CONTROL_SOCKET_ENV);
+        clear_test_env(CONTROL_TOKEN_ENV);
+        clear_test_env(SESSION_ID_ENV);
+    }
+
+    #[tokio::test]
+    // See the identical `#[allow]` above.
+    #[allow(clippy::await_holding_lock)]
+    async fn run_reports_every_attempt_exhausted_when_conan_code_never_answers() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        // No socket ever gets created: every attempt must fail fast
+        // rather than hang, and the final error must say so plainly
+        // instead of looking like a one-off glitch.
+        let socket_path = dir.path().join("nobody-home.sock");
+
+        set_test_env(CONTROL_SOCKET_ENV, socket_path.to_str().unwrap());
+        set_test_env(CONTROL_TOKEN_ENV, "tok");
+        set_test_env(SESSION_ID_ENV, "session-1");
+
+        let tool = PointToCodeTool;
+        let err = Tool::run(
+            &tool,
+            ToolCallContext::default(),
+            PointToCodeInput {
+                file_path: "src/lib.rs".to_string(),
+                line_start: 1,
+                line_end: 1,
+                comment: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.detail.contains("after 3 attempts"),
+            "detail: {}",
+            err.detail
+        );
+        assert!(err.detail.contains("transient"), "detail: {}", err.detail);
+
         clear_test_env(CONTROL_SOCKET_ENV);
         clear_test_env(CONTROL_TOKEN_ENV);
         clear_test_env(SESSION_ID_ENV);
