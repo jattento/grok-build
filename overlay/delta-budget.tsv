@@ -11,13 +11,16 @@
 # this file from the current tree but refuses to raise any number unless
 # you pass --allow-growth "<reason>", which appends a dated comment.
 #
-# GROWTH 2026-08-26: 429-without-Retry-After retry fix in xai-grok-sampler/src/retry.rs
-#     TOTAL: 3575 > 3495 (+80)
+# GROWTH 2026-08-26: point_to_code native tool for Conan Code (github.com/jattento/coinor)
+#     Cargo.lock: 62 > 45 (+17)
+#     Cargo.toml: 5 > 4 (+1)
+#     crates/codegen/xai-grok-shell/Cargo.toml: 5 > 4 (+1)
+#     TOTAL: 3616 > 3575 (+41)
 #
 # Format: <changed-lines><TAB><path>
 #
-45	Cargo.lock
-4	Cargo.toml
+62	Cargo.lock
+5	Cargo.toml
 6	crates/codegen/xai-grok-markdown/src/buffers.rs
 4	crates/codegen/xai-grok-markdown/src/lib.rs
 37	crates/codegen/xai-grok-markdown/src/output.rs
@@ -49,7 +52,7 @@
 120	crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs
 2	crates/codegen/xai-grok-sampling-types/src/messages.rs
 25	crates/codegen/xai-grok-sampling-types/src/types.rs
-4	crates/codegen/xai-grok-shell/Cargo.toml
+5	crates/codegen/xai-grok-shell/Cargo.toml
 20	crates/codegen/xai-grok-shell/src/agent/config.rs
 110	crates/codegen/xai-grok-shell/src/agent/config_tests.rs
 5	crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
@@ -62,6 +65,7 @@
 25	crates/codegen/xai-grok-shell/src/extensions/skills.rs
 149	crates/codegen/xai-grok-shell/src/sampling/error.rs
 10	crates/codegen/xai-grok-shell/src/session/acp_session_impl/goal.rs
+22	crates/codegen/xai-grok-shell/src/session/acp_session_impl/mcp.rs
 25	crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs
 38	crates/codegen/xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs
 2	crates/codegen/xai-grok-shell/src/session/acp_session_impl/spawn.rs
@@ -85,4 +89,4 @@
 276	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs
 9	crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs
 52	crates/common/xai-tool-types/src/task.rs
-3575	TOTAL
+3616	TOTAL
